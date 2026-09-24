@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<!-- ============================================================
+     物料管家 —— 智能控制协会物料管理系统（单机离线版）
+     ------------------------------------------------------------
+     特点：
+     1. 纯前端实现，双击本文件即可运行，无需安装、无需联网
+     2. 数据保存在浏览器 IndexedDB 本地数据库中
+     3. 手机 / 平板 / 电脑浏览器均可使用（响应式界面）
+     4. 全中文注释，方便协会同学自行修改维护
+     ============================================================ -->
+<html lang="zh-CN" data-theme="light">
+<head>
+  <!-- 网页编码与基础设置 -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <!-- 浏览器主题色（手机状态栏颜色） -->
+  <meta name="theme-color" content="#4f46e5" />
+  <!-- 网页标题 -->
+  <title>物料管家 · 智能控制协会物料管理系统</title>
+  <!-- 网页图标：内联 SVG 芯片图案，不依赖外部文件 -->
+  <link rel="icon" href="./assets/logo.png" />
+  <!-- PWA 应用清单：手机/电脑"添加到主屏幕 / 安装应用"时读取的名称与图标 -->
+  <link rel="manifest" href="./manifest.json" />
+  <!-- 样式表 -->
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- 未开启 JavaScript 时的提示 -->
+  <noscript>
+    <div style="padding:40px;text-align:center;font-size:16px;">
+      本系统需要浏览器开启 JavaScript 才能运行，请在浏览器设置中允许 JavaScript。
+    </div>
+  </noscript>
+
+  <!-- 应用根容器：所有页面都由 JavaScript 动态渲染到这里 -->
+  <div id="app"></div>
+
+  <!--
+    脚本按顺序加载（defer 表示等页面结构加载完再执行）：
+    data.js      静态数据（拼音表 / 分类库 / 配料模板 / 示例数据）
+    core.js      核心工具（数据库 / 登录认证 / 搜索引擎 / 通用组件）
+    pages_main.js   主要页面（仪表盘 / 物料库 / 详情 / 出入库 / 预警）
+    pages_stats.js  统计页面（消耗排行 / 经费统计 / 历史追溯 / 数据管理）
+    pages_admin.js   管理页面（用户管理 / 系统设置）
+    pages_ai.js      AI 页面（智能配料 / 拍照识别 / AI 元件介绍）
+    sync.js      多端同步（局域网服务器同步 / 离线暂存 / 断网自动补传）
+    main.js      入口（路由 / 侧边栏 / 初始化）
+  -->
+  <script src="js/data.js" defer></script>
+  <script src="js/core.js" defer></script>
+  <script src="js/pages_main.js" defer></script>
+  <script src="js/pages_stats.js" defer></script>
+  <script src="js/pages_admin.js" defer></script>
+  <script src="js/pages_ai.js" defer></script>
+  <script src="js/pages_manual.js" defer></script>
+  <script src="js/sync.js" defer></script>
+  <script src="js/main.js" defer></script>
+
+  <script>
+    /* 注册 Service Worker（PWA 离线能力的关键）：
+       只有通过 http:// 或 https:// 访问（局域网服务器 / 部署）时才注册；
+       双击 file:// 直接打开时跳过——单机离线版本来就不依赖网络，不受影响。 */
+    if ('serviceWorker' in navigator &&
+        (location.protocol === 'https:' || location.protocol === 'http:')) {
+      navigator.serviceWorker.register('./sw.js')
+        .catch(function () { /* 注册失败（如浏览器不支持）不影响正常使用 */ });
+    }
+  </script>
+</body>
+</html>

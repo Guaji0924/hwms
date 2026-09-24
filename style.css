@@ -1,0 +1,527 @@
+/* ============================================================
+   物料管家 —— 全局样式表
+   ------------------------------------------------------------
+   目录：
+   01. 主题变量（浅色 / 深色）
+   02. 基础重置
+   03. 通用布局（侧栏 / 顶栏 / 内容区）
+   04. 通用组件（按钮 / 表单 / 卡片 / 表格 / 徽章 ...）
+   05. 弹窗 / 提示 / 下拉建议
+   06. 各页面专属样式
+   07. 响应式（手机适配）
+   08. 打印样式
+   ============================================================ */
+
+/* ============ 01. 主题变量 ============ */
+:root {
+  /* 主色调（靛蓝色，现代后台风格） */
+  --primary: #4f46e5;          /* 主色：按钮、链接、选中态 */
+  --primary-dark: #4338ca;     /* 主色深：按钮悬停 */
+  --primary-light: #eef2ff;    /* 主色浅：选中背景 */
+  /* 功能色 */
+  --success: #16a34a;          /* 绿色：入库、正常 */
+  --warning: #f59e0b;          /* 橙色：一般提醒 */
+  --danger: #dc2626;           /* 红色：库存告急、删除 */
+  --info: #0284c7;             /* 蓝色：领用、信息 */
+  /* 界面色 */
+  --bg: #f3f4f6;               /* 页面背景 */
+  --bg-card: #ffffff;         /* 卡片背景 */
+  --bg-hover: #f5f6f8;        /* 悬停背景 */
+  --bg-soft: #f9fafb;         /* 更浅的底色（拍照预览框 / 识别结果卡） */
+  --bg-sidebar: #111827;      /* 侧栏背景（深色） */
+  --text: #1f2937;             /* 主文字 */
+  --text-sub: #6b7280;         /* 次要文字 */
+  --text-inv: #f9fafb;         /* 侧栏文字（浅色） */
+  --border: #e5e7eb;           /* 边框 */
+  --shadow: 0 1px 3px rgba(0,0,0,.08);           /* 常规阴影 */
+  --shadow-lg: 0 10px 30px rgba(0,0,0,.15);      /* 弹窗阴影 */
+  --radius: 10px;              /* 圆角 */
+  --radius-sm: 6px;            /* 小圆角 */
+  --sidebar-w: 232px;          /* 侧栏宽度 */
+  --topbar-h: 60px;            /* 顶栏高度 */
+}
+
+/* 深色主题：html 标签带 data-theme="dark" 时生效 */
+html[data-theme="dark"] {
+  --primary: #818cf8;
+  --primary-dark: #6366f1;
+  --primary-light: #1e1b4b;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #38bdf8;
+  --bg: #0f172a;
+  --bg-card: #1e293b;
+  --bg-hover: #334155;
+  --bg-soft: #263248;
+  --bg-sidebar: #0b1120;
+  --text: #e2e8f0;
+  --text-sub: #94a3b8;
+  --text-inv: #e2e8f0;
+  --border: #334155;
+  --shadow: 0 1px 3px rgba(0,0,0,.4);
+  --shadow-lg: 0 10px 30px rgba(0,0,0,.6);
+}
+
+/* ============ 02. 基础重置 ============ */
+* { margin: 0; padding: 0; box-sizing: border-box; }          /* 清除所有元素默认内外边距，统一盒模型 */
+
+html, body { height: 100%; }                                   /* 页面撑满浏览器高度 */
+
+body {
+  font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif; /* 中文优先的字体栈 */
+  background: var(--bg);                                       /* 页面背景色 */
+  color: var(--text);                                          /* 默认文字颜色 */
+  font-size: 14px;                                             /* 基础字号 */
+  line-height: 1.6;                                            /* 行高 */
+  -webkit-font-smoothing: antialiased;                         /* 字体抗锯齿 */
+}
+
+a { color: var(--primary); text-decoration: none; }            /* 链接统一主色、去下划线 */
+a:hover { text-decoration: underline; }                        /* 链接悬停时显示下划线 */
+
+/* 美化滚动条（WebKit 内核浏览器） */
+::-webkit-scrollbar { width: 8px; height: 8px; }               /* 滚动条尺寸 */
+::-webkit-scrollbar-thumb { background: #c7cbd1; border-radius: 4px; } /* 滚动条滑块 */
+::-webkit-scrollbar-track { background: transparent; }         /* 滚动条轨道透明 */
+html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #475569; } /* 深色主题下滑块颜色 */
+
+/* ============ 03. 通用布局 ============ */
+
+/* 主框架：左侧栏 + 右侧内容 */
+.shell { display: flex; min-height: 100vh; }                   /* 横向弹性布局，至少占满一屏 */
+
+/* --- 侧栏 --- */
+.sidebar {
+  width: var(--sidebar-w);                                      /* 固定宽度 */
+  background: var(--bg-sidebar);                               /* 深色背景 */
+  color: var(--text-inv);                                      /* 浅色文字 */
+  display: flex; flex-direction: column;                        /* 纵向排列 */
+  position: fixed;                                              /* 固定在左侧 */
+  left: 0; top: 0; bottom: 0;                                   /* 占满左侧高度 */
+  z-index: 100;                                                 /* 层级高于内容区 */
+  transition: transform .25s;                                   /* 移动端抽屉动画 */
+}
+
+/* 侧栏 logo 区域 */
+.sidebar-logo {
+  height: var(--topbar-h);                                      /* 与顶栏同高 */
+  display: flex; align-items: center; gap: 10px;                /* 图标与文字水平排列 */
+  padding: 0 18px;                                              /* 左右内边距 */
+  font-size: 17px; font-weight: 700;                            /* 加粗标题 */
+  border-bottom: 1px solid rgba(255,255,255,.08);              /* 底部分隔线 */
+  white-space: nowrap;                                          /* 防止文字换行 */
+}
+.sidebar-logo .logo-ico {                                       /* logo 图标 */
+  width: 32px; height: 32px; flex: none;                        /* 固定尺寸 */
+  background: var(--primary); border-radius: 8px;               /* 主色圆角方块 */
+  display: flex; align-items: center; justify-content: center; /* 图标居中 */
+  color: #fff; font-size: 16px;                                 /* 图标白色 */
+}
+.sidebar-logo .logo-ico svg { width: 18px; height: 18px; flex: none; } /* logo 内芯片图标尺寸 */
+.sidebar-logo .logo-sub { font-size: 11px; font-weight: 400; color: rgba(255,255,255,.45); display: block; } /* 副标题 */
+
+/* 侧栏菜单 */
+.sidebar-nav { flex: 1; overflow-y: auto; padding: 12px 10px; }  /* 菜单可滚动 */
+.nav-item {
+  display: flex; align-items: center; gap: 12px;               /* 图标与文字排列 */
+  padding: 11px 14px;                                           /* 内边距 */
+  border-radius: 8px;                                           /* 圆角 */
+  color: rgba(255,255,255,.65);                                 /* 默认浅灰白 */
+  cursor: pointer;                                              /* 手型光标 */
+  margin-bottom: 2px;                                           /* 菜单项间距 */
+  white-space: nowrap;                                          /* 禁止换行 */
+  font-size: 14px;                                              /* 菜单字号 */
+  border: none; background: none; width: 100%; text-align: left; /* 清除按钮默认样式 */
+  transition: background .15s, color .15s;                      /* 过渡动画 */
+}
+.nav-item:hover { background: rgba(255,255,255,.08); color: #fff; } /* 悬停效果 */
+.nav-item.active { background: var(--primary); color: #fff; }  /* 当前选中项高亮 */
+.nav-item svg { width: 18px; height: 18px; flex: none; }         /* 菜单图标尺寸 */
+.nav-group-title {                                              /* 菜单分组标题 */
+  font-size: 11px; color: rgba(255,255,255,.35); padding: 14px 14px 6px; letter-spacing: 1px;
+}
+
+/* 侧栏底部用户信息（两行结构：上行头像+姓名，下行一排小按钮） */
+.sidebar-user {
+  padding: 12px 12px; border-top: 1px solid rgba(255,255,255,.08); /* 上分隔线 */
+  display: flex; flex-direction: column; gap: 10px;             /* 纵向排列上下两行 */
+}
+.sidebar-dev {                                                   /* 侧栏底部开发者署名（隐蔽小字） */
+  padding: 0 12px 10px; font-size: 10.5px; text-align: center;   /* 小字号居中 */
+  color: rgba(255,255,255,.28); user-select: none;               /* 极低对比度：隐蔽但不缺席 */
+}
+.su-top { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; } /* 上行：头像+文字 */
+.user-avatar {                                                  /* 圆形头像（首字母） */
+  width: 36px; height: 36px; border-radius: 50%; flex: none;     /* 圆形 */
+  background: var(--primary); color: #fff;                       /* 主色背景白字 */
+  display: flex; align-items: center; justify-content: center;  /* 文字居中 */
+  font-weight: 600; font-size: 15px;                             /* 加粗 */
+}
+.user-meta { flex: 1; min-width: 0; }                           /* 用户文字区 */
+.user-meta .u-name { display: block; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* 用户名（超长省略） */
+.user-meta .u-role { display: block; font-size: 11px; color: rgba(255,255,255,.45); }  /* 角色文字 */
+.su-actions { display: flex; gap: 4px; width: 100%; }            /* 下行：一排带文字的小按钮 */
+.su-btn {                                                        /* 用户卡小按钮（图标在上文字在下） */
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  background: none; border: none; color: rgba(255,255,255,.55); cursor: pointer;
+  padding: 7px 2px; border-radius: 8px; font-size: 11px; font-family: inherit;
+  transition: background .15s, color .15s; white-space: nowrap;
+}
+.su-btn:hover { background: rgba(255,255,255,.1); color: #fff; } /* 悬停效果 */
+.su-btn svg { width: 15px; height: 15px; flex: none; }           /* 按钮小图标 */
+.icon-btn-inv {                                                 /* 侧栏内的图标按钮 */
+  background: none; border: none; color: rgba(255,255,255,.55); cursor: pointer;
+  padding: 6px; border-radius: 6px; display: flex; align-items: center;
+}
+.icon-btn-inv:hover { background: rgba(255,255,255,.1); color: #fff; } /* 悬停效果 */
+
+/* --- 顶栏 --- */
+.main-area { flex: 1; margin-left: var(--sidebar-w); display: flex; flex-direction: column; min-width: 0; } /* 内容区：侧栏右侧 */
+
+.topbar {
+  height: var(--topbar-h);                                      /* 固定高度 */
+  background: var(--bg-card);                                   /* 白色背景 */
+  border-bottom: 1px solid var(--border);                       /* 底部边框 */
+  display: flex; align-items: center; gap: 14px;                 /* 内容横向排列 */
+  padding: 0 22px;                                              /* 左右内边距 */
+  position: sticky; top: 0; z-index: 90;                        /* 滚动时固定在顶部 */
+}
+.topbar .tb-title { font-size: 17px; font-weight: 700; }        /* 页面标题 */
+.topbar .tb-sub { font-size: 12px; color: var(--text-sub); }    /* 页面副标题 */
+.tb-right { margin-left: auto; display: flex; align-items: center; gap: 8px; } /* 顶栏右侧按钮组 */
+
+/* 顶栏铃铛（库存预警角标） */
+.bell-wrap { position: relative; }                              /* 相对定位包裹角标 */
+.bell-badge {                                                   /* 红色数字角标 */
+  position: absolute; top: -4px; right: -4px;                    /* 右上角定位 */
+  background: var(--danger); color: #fff;                        /* 红底白字 */
+  font-size: 10px; min-width: 16px; height: 16px;                /* 尺寸 */
+  border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 0 4px;
+}
+.icon-btn {                                                     /* 通用图标按钮（浅色区） */
+  background: none; border: none; color: var(--text-sub); cursor: pointer;
+  padding: 8px; border-radius: 8px; display: flex; align-items: center;
+}
+.icon-btn:hover { background: var(--bg-hover); color: var(--text); } /* 悬停 */
+.icon-btn svg { width: 20px; height: 20px; flex: none; }         /* 图标按钮统一尺寸（原来没约束会撑得很大） */
+
+/* --- 顶栏网络/同步状态指示器（sync.js 渲染到 #net-state） --- */
+.net-state {
+  display: inline-flex; align-items: center; gap: 5px;           /* 图标+文字横排 */
+  font-size: 12px; padding: 4px 10px; border-radius: 14px;       /* 胶囊形状 */
+  white-space: nowrap; flex: none; line-height: 1.4;
+}
+.net-state svg { width: 13px; height: 13px; flex: none; }        /* 小图标 */
+.net-state.ns-on  { background: rgba(22,163,74,.12);  color: var(--success); } /* 绿色：已同步 */
+.net-state.ns-off { background: var(--bg-hover);      color: var(--text-sub); } /* 灰色：离线模式 */
+.net-state.ns-err { background: rgba(245,158,11,.15); color: #b45309; }        /* 橙色：同步异常 */
+.net-state.ns-busy { background: rgba(2,132,199,.12); color: var(--info); }    /* 蓝色：同步中 */
+.net-state.ns-busy svg { animation: nsSpin 1s linear infinite; }               /* 转圈动画 */
+@keyframes nsSpin { to { transform: rotate(360deg); } }
+
+/* --- 成员视角预览提示条（管理员预览普通成员界面时显示） --- */
+.viewas-banner {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; /* 内容横排可换行 */
+  background: var(--primary-light); color: var(--primary);       /* 主色浅底 */
+  padding: 9px 22px; font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.viewas-banner svg { width: 15px; height: 15px; flex: none; }    /* 提示图标 */
+.viewas-banner .btn { margin-left: auto; flex: none; }           /* 退出按钮靠右 */
+
+/* 移动端遮罩：点按关闭抽屉侧栏 */
+.drawer-mask { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 99; }
+.hamburger { display: none; }                                   /* 汉堡按钮：默认隐藏，小屏显示 */
+
+/* --- 内容区 --- */
+.page-wrap { padding: 22px; max-width: 1400px; width: 100%; margin: 0 auto; } /* 页面内容容器 */
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; } /* 页面头部：标题+操作按钮 */
+.page-title { font-size: 20px; font-weight: 700; }              /* 大标题 */
+.page-desc { font-size: 12.5px; color: var(--text-sub); margin-top: 2px; } /* 标题下的说明文字 */
+
+/* ============ 04. 通用组件 ============ */
+
+/* --- 卡片 --- */
+.card {
+  background: var(--bg-card); border: 1px solid var(--border);  /* 白底细边框 */
+  border-radius: var(--radius); box-shadow: var(--shadow);       /* 圆角+阴影 */
+  padding: 18px; margin-bottom: 16px;                            /* 内边距与下间距 */
+}
+.card-title { font-size: 15px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; } /* 卡片标题 */
+.card-title svg { width: 16px; height: 16px; flex: none; }         /* 卡片标题图标尺寸 */
+.card-title .more { margin-left: auto; font-size: 12px; font-weight: 400; } /* 标题右侧的"更多" */
+
+/* --- 按钮 --- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; /* 图标文字排列 */
+  padding: 9px 16px; border-radius: 8px; border: 1px solid transparent;         /* 圆角边框 */
+  font-size: 13.5px; cursor: pointer; background: var(--bg-hover); color: var(--text); /* 默认灰色按钮 */
+  transition: all .15s; white-space: nowrap; line-height: 1;                     /* 禁止换行 */
+  user-select: none;                                                            /* 禁止选中文字 */
+}
+.btn:hover { filter: brightness(.96); }                          /* 悬停变暗一点 */
+.btn:active { transform: scale(.97); }                           /* 按下微缩 */
+.btn-primary { background: var(--primary); color: #fff; }        /* 主色按钮 */
+.btn-success { background: var(--success); color: #fff; }        /* 绿色按钮（入库） */
+.btn-danger { background: var(--danger); color: #fff; }          /* 红色按钮（删除） */
+.btn-outline { background: transparent; border-color: var(--border); color: var(--text); } /* 描边按钮 */
+.btn-outline:hover { border-color: var(--primary); color: var(--primary); } /* 描边按钮悬停 */
+.btn-sm { padding: 5px 10px; font-size: 12.5px; border-radius: 6px; } /* 小号按钮（表格内） */
+.btn-lg { padding: 12px 22px; font-size: 15px; }                  /* 大号按钮 */
+.btn-block { width: 100%; }                                       /* 占满整行的按钮 */
+.btn:disabled { opacity: .5; cursor: not-allowed; }                /* 禁用态 */
+.btn svg { width: 15px; height: 15px; flex: none; }                /* 按钮内图标统一 15px（原来没约束，图标显示过大） */
+.btn-sm svg { width: 13px; height: 13px; }                         /* 小按钮里图标更小一号 */
+
+/* --- 表单 --- */
+.form-item { margin-bottom: 14px; }                               /* 每个表单项的间距 */
+.form-item label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; } /* 表单标签 */
+.form-item label .req { color: var(--danger); }                  /* 必填星号 */
+.input, .select, .textarea {                                      /* 输入框统一样式 */
+  width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-card); color: var(--text); font-size: 13.5px; outline: none;
+  transition: border-color .15s, box-shadow .15s; font-family: inherit; /* 过渡与继承字体 */
+}
+.input:focus, .select:focus, .textarea:focus {                    /* 聚焦时主色描边 */
+  border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 15%, transparent);
+}
+.textarea { resize: vertical; min-height: 70px; }                 /* 文本域可纵向拖拽调整 */
+.form-row { display: flex; gap: 12px; }                           /* 一行多个表单项 */
+.form-row .form-item { flex: 1; }                                 /* 平分宽度 */
+.form-hint { font-size: 12px; color: var(--text-sub); margin-top: 4px; } /* 表单下的提示文字 */
+.radio-group { display: flex; gap: 8px; flex-wrap: wrap; }        /* 单选按钮组 */
+.radio-chip {                                                     /* 单选胶囊按钮 */
+  padding: 7px 14px; border: 1.5px solid var(--border); border-radius: 20px; cursor: pointer;
+  font-size: 13px; user-select: none; background: var(--bg-card); transition: all .15s; display: inline-flex; gap: 5px; align-items: center;
+}
+.radio-chip.on { border-color: var(--primary); background: var(--primary-light); color: var(--primary); font-weight: 600; } /* 选中态 */
+
+/* --- 表格 --- */
+.table-wrap { overflow-x: auto; border-radius: var(--radius-sm); } /* 小屏横向滚动 */
+table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; } /* 表格基础 */
+.tbl th {                                                        /* 表头 */
+  text-align: left; padding: 11px 12px; background: var(--bg-hover);
+  color: var(--text-sub); font-size: 12.5px; font-weight: 600; white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+.tbl td {                                                        /* 单元格 */
+  padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: middle;
+}
+.tbl tbody tr:hover { background: var(--bg-hover); }              /* 行悬停 */
+.tbl .t-link { color: var(--primary); cursor: pointer; font-weight: 600; } /* 可点击的名称 */
+.tbl .num { font-variant-numeric: tabular-nums; }                 /* 数字等宽对齐 */
+.tbl .th-sort { cursor: pointer; user-select: none; }             /* 可排序表头 */
+
+/* --- 徽章 --- */
+.badge {                                                          /* 徽章基础 */
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px;
+  font-size: 12px; border-radius: 12px; font-weight: 600; line-height: 1.6; white-space: nowrap;
+}
+.badge-red { background: rgba(220,38,38,.12); color: var(--danger); }    /* 红色：告急 */
+.badge-yellow { background: rgba(245,158,11,.14); color: #b45309; }      /* 黄色：偏低 */
+.badge-green { background: rgba(22,163,74,.12); color: var(--success); }  /* 绿色：正常/入库 */
+.badge-blue { background: rgba(2,132,199,.12); color: var(--info); }      /* 蓝色：领用 */
+.badge-gray { background: var(--bg-hover); color: var(--text-sub); }      /* 灰色：一般 */
+.badge-purple { background: rgba(124,58,237,.12); color: #7c3aed; }      /* 紫色：借出 */
+.badge-teal { background: rgba(13,148,136,.12); color: #0d9488; }        /* 青色：归还 */
+.badge-orange { background: rgba(234,88,12,.12); color: #ea580c; }       /* 橙色：调整 */
+.badge svg { width: 12px; height: 12px; flex: none; }                    /* 徽章内小图标（如位置 pin） */
+
+/* --- 标签 chips --- */
+.tag-chip {                                                        /* 物料标签 */
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px;
+  background: var(--primary-light); color: var(--primary); border-radius: 6px; font-size: 12px; cursor: pointer;
+}
+.tag-chip:hover { text-decoration: none; filter: brightness(.96); }
+.tag-chip svg { width: 12px; height: 12px; flex: none; }          /* 标签内小图标 */
+.chips-row { display: flex; gap: 8px; flex-wrap: wrap; }           /* 标签行 */
+
+/* --- 面包屑 --- */
+.breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-sub); margin-bottom: 12px; flex-wrap: wrap; } /* 面包屑导航 */
+.breadcrumb a { color: var(--text-sub); cursor: pointer; }         /* 可点的层级 */
+.breadcrumb a:hover { color: var(--primary); text-decoration: none; }
+.breadcrumb .cur { color: var(--text); font-weight: 600; }         /* 当前层级 */
+
+/* --- 统计卡片 --- */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 16px; } /* 自适应列数 */
+.stat-card {                                                      /* 统计卡片 */
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; box-shadow: var(--shadow); display: flex; align-items: center; gap: 14px;
+}
+.stat-ico { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex: none; } /* 图标底 */
+.stat-ico svg { width: 22px; height: 22px; flex: none; }          /* 统计卡图标尺寸 */
+.stat-card .s-val { font-size: 22px; font-weight: 700; line-height: 1.2; } /* 数值 */
+.stat-card .s-label { font-size: 12px; color: var(--text-sub); }           /* 标签 */
+
+/* --- 栅格 --- */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }        /* 两列栅格 */
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; } /* 三列栅格 */
+
+/* --- 空状态 --- */
+.empty { text-align: center; padding: 50px 20px; color: var(--text-sub); } /* 无数据提示 */
+.empty .e-ico { font-size: 44px; margin-bottom: 10px; opacity: .5; }        /* 大图标 */
+
+/* --- 分页 --- */
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; flex-wrap: wrap; } /* 分页条 */
+.pager .p-info { font-size: 12.5px; color: var(--text-sub); }              /* 分页信息 */
+.pager .p-btns { display: flex; gap: 6px; }                                 /* 按钮组 */
+
+/* --- 时间线（历史追溯） --- */
+.timeline { position: relative; padding-left: 24px; }                       /* 左侧留出竖线位置 */
+.timeline::before {                                                          /* 竖线 */
+  content: ''; position: absolute; left: 7px; top: 4px; bottom: 4px; width: 2px; background: var(--border);
+}
+.tl-item { position: relative; padding-bottom: 18px; }                      /* 单条记录 */
+.tl-item::before {                                                           /* 时间线圆点 */
+  content: ''; position: absolute; left: -21px; top: 5px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--primary); border: 2px solid var(--bg-card);
+}
+.tl-item.tl-in::before { background: var(--success); }                       /* 入库绿点 */
+.tl-item.tl-out::before { background: var(--info); }                         /* 领用蓝点 */
+.tl-item.tl-consume::before { background: #ea580c; }                          /* 消耗橙点 */
+.tl-item.tl-borrow::before { background: #7c3aed; }                           /* 借出紫点 */
+.tl-item.tl-return::before { background: #0d9488; }                          /* 归还青点 */
+.tl-item.tl-adjust::before { background: #94a3b8; }                           /* 调整灰点 */
+.tl-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }  /* 单条头部 */
+.tl-time { font-size: 12px; color: var(--text-sub); }                        /* 时间 */
+.tl-body { font-size: 13px; color: var(--text-sub); margin-top: 3px; }       /* 内容 */
+
+/* --- Tabs 页签 --- */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; overflow-x: auto; } /* 页签栏 */
+.tab { padding: 10px 18px; cursor: pointer; font-size: 14px; color: var(--text-sub); border-bottom: 2px solid transparent; white-space: nowrap; background: none; border-top: none; border-left: none; border-right: none; font-family: inherit; } /* 单个页签 */
+.tab:hover { color: var(--text); }                                            /* 悬停 */
+.tab.on { color: var(--primary); border-bottom-color: var(--primary); font-weight: 700; } /* 选中页签 */
+
+/* ============ 05. 弹窗 / 提示 / 下拉建议 ============ */
+
+/* --- 模态弹窗 --- */
+.modal-mask {                                                   /* 弹窗遮罩层 */
+  position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: 200;
+  display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto;
+}
+.modal {                                                        /* 弹窗主体 */
+  background: var(--bg-card); border-radius: 14px; box-shadow: var(--shadow-lg);
+  width: 100%; max-width: 640px; animation: modalIn .2s ease;   /* 弹入动画 */
+}
+.modal.wide { max-width: 860px; }                               /* 宽弹窗 */
+.modal-head {                                                    /* 弹窗标题栏 */
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--border); font-size: 16px; font-weight: 700;
+}
+.modal-body { padding: 20px; }                                   /* 弹窗内容区 */
+.modal-foot {                                                    /* 弹窗底部按钮区 */
+  display: flex; justify-content: flex-end; gap: 10px; padding: 0 20px 18px;
+}
+@keyframes modalIn { from { opacity: 0; transform: translateY(-16px) scale(.98); } to { opacity: 1; transform: none; } } /* 弹窗进入动画 */
+
+/* --- Toast 轻提示 --- */
+.toast-wrap { position: fixed; top: 18px; right: 18px; z-index: 300; display: flex; flex-direction: column; gap: 10px; } /* 提示容器 */
+.toast {                                                         /* 单条提示 */
+  background: var(--bg-card); color: var(--text); border-radius: 10px; box-shadow: var(--shadow-lg);
+  padding: 12px 18px; font-size: 13.5px; display: flex; align-items: center; gap: 10px;
+  border-left: 4px solid var(--info); min-width: 240px; max-width: 86vw; animation: toastIn .25s ease;
+}
+.toast.t-ok { border-left-color: var(--success); }               /* 成功绿色 */
+.toast.t-err { border-left-color: var(--danger); }               /* 失败红色 */
+.toast.t-warn { border-left-color: var(--warning); }             /* 警告橙色 */
+@keyframes toastIn { from { opacity: 0; transform: translateX(30px); } to { opacity: 1; transform: none; } } /* 提示滑入 */
+
+/* --- 搜索下拉建议 --- */
+.sug-wrap { position: relative; }                                /* 建议框相对定位 */
+.sug-list {                                                      /* 建议列表 */
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 150;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg);
+  max-height: 320px; overflow-y: auto;
+}
+.sug-item { padding: 10px 14px; cursor: pointer; display: flex; align-items: center; gap: 10px; } /* 建议项 */
+.sug-item:hover, .sug-item.on { background: var(--bg-hover); }   /* 悬停/选中 */
+.sug-item .s-name { font-weight: 600; font-size: 13.5px; }       /* 建议名称 */
+.sug-item .s-sub { font-size: 12px; color: var(--text-sub); }    /* 建议次要信息 */
+
+/* ============ 06. 页面专属样式 ============ */
+
+/* --- 登录页 --- */
+.login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); padding: 20px; } /* 渐变背景 */
+.login-card { background: #fff; border-radius: 18px; box-shadow: var(--shadow-lg); padding: 40px 36px; width: 100%; max-width: 400px; } /* 登录卡片 */
+.login-card .lg-ico { width: 60px; height: 60px; border-radius: 16px; background: var(--primary); color: #fff; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; font-size: 30px; } /* 登录图标 */
+.login-card h1 { text-align: center; font-size: 22px; margin-bottom: 4px; color: #111827; } /* 登录标题 */
+.login-card .lg-sub { text-align: center; font-size: 13px; color: #6b7280; margin-bottom: 24px; } /* 登录副标题 */
+.login-tip { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-size: 12.5px; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; } /* 首次运行提示条 */
+.login-err { color: var(--danger); font-size: 13px; margin-bottom: 10px; display: none; } /* 登录错误提示 */
+.login-foot { text-align: center; font-size: 11.5px; color: #9ca3af; margin-top: 18px; } /* 底部版权 */
+
+/* --- 仪表盘 --- */
+.dash-activity { font-size: 13px; }                              /* 最近动态列表 */
+.dash-activity .act-item { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px dashed var(--border); align-items: center; } /* 动态条目 */
+.dash-activity .act-item:last-child { border-bottom: none; }      /* 最后一条无分隔线 */
+
+/* --- 物料详情 --- */
+.detail-head { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; } /* 详情头部 */
+.detail-head .d-info { flex: 1; min-width: 220px; }               /* 头部信息 */
+.detail-head .d-name { font-size: 21px; font-weight: 700; }       /* 物料名 */
+.kv-list { font-size: 13.5px; }                                   /* 键值对列表 */
+.kv-list .kv { display: flex; padding: 7px 0; border-bottom: 1px dashed var(--border); gap: 12px; } /* 单行键值 */
+.kv-list .kv:last-child { border-bottom: none; }                  /* 最后一行无分隔 */
+.kv-list .k { color: var(--text-sub); width: 88px; flex: none; } /* 键 */
+.kv-list .v { flex: 1; word-break: break-all; }                   /* 值 */
+
+/* --- 智能配料 --- */
+.ai-input-wrap { display: flex; gap: 10px; flex-wrap: wrap; }     /* 需求输入区 */
+.ai-input-wrap .input { flex: 1; min-width: 220px; padding: 13px 16px; font-size: 15px; } /* 大输入框 */
+.ai-result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; } /* 结果两栏 */
+.ai-plan-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 10px; background: var(--bg-card); flex-wrap: wrap; } /* 清单条目 */
+.ai-plan-item .p-name { flex: 1; min-width: 140px; font-weight: 600; font-size: 13.5px; } /* 条目名称 */
+.ai-plan-item .p-loc { font-size: 12px; color: var(--text-sub); } /* 条目位置 */
+.ai-quote { font-size: 12px; color: var(--text-sub); background: var(--bg-hover); border-radius: 8px; padding: 10px 12px; margin-top: 10px; line-height: 1.7; } /* AI 返回的建议文字 */
+
+/* --- 统计页 --- */
+.bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; } /* 横向条形排行 */
+.bar-row .b-label { width: 130px; font-size: 12.5px; text-align: right; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* 条形标签 */
+.bar-row .b-track { flex: 1; background: var(--bg-hover); border-radius: 6px; height: 18px; overflow: hidden; } /* 条形轨道 */
+.bar-row .b-fill { height: 100%; background: var(--primary); border-radius: 6px; min-width: 2px; } /* 条形填充 */
+.bar-row .b-val { width: 70px; font-size: 12.5px; color: var(--text-sub); flex: none; } /* 条形数值 */
+
+/* --- 图表容器 --- */
+.chart-box { overflow-x: auto; }                                  /* 图表横向滚动容器 */
+.chart-box svg { display: block; max-width: 100%; }               /* SVG 自适应 */
+
+/* ============ 07. 响应式（手机适配） ============ */
+
+/* 中屏：侧栏收窄为图标 */
+@media (max-width: 1024px) {
+  .grid-3 { grid-template-columns: 1fr; }                        /* 三列变单列 */
+  .grid-2 { grid-template-columns: 1fr; }                        /* 两列变单列 */
+  .ai-result-grid { grid-template-columns: 1fr; }                 /* 配料结果变单列 */
+}
+
+/* 小屏：侧栏变为抽屉 */
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-100%); }                     /* 默认移出屏幕外 */
+  .sidebar.open { transform: none; }                              /* 打开时滑入 */
+  .drawer-mask.show { display: block; }                           /* 显示遮罩 */
+  .hamburger { display: flex; }                                   /* 显示汉堡按钮 */
+  .main-area { margin-left: 0; }                                  /* 内容区占满宽度 */
+  .page-wrap { padding: 14px; }                                   /* 内容区内边距缩小 */
+  .topbar { padding: 0 14px; }                                    /* 顶栏内边距缩小 */
+  .topbar .tb-sub { display: none; }                              /* 小屏隐藏副标题 */
+  .form-row { flex-direction: column; gap: 0; }                    /* 表单行变纵向 */
+  .tbl { font-size: 12.5px; }                                       /* 小屏表格字号缩小 */
+  .page-head { flex-direction: column; align-items: stretch; }    /* 页头按钮占满 */
+}
+
+/* 超小屏微调 */
+@media (max-width: 480px) {
+  .stat-grid { grid-template-columns: 1fr 1fr; gap: 10px; }       /* 统计卡两列 */
+  .page-title { font-size: 17px; }                                /* 标题缩小 */
+  .ai-input-wrap { flex-direction: column; }                      /* 配料输入框纵向 */
+}
+
+/* ============ 08. 打印样式 ============ */
+@media print {
+  .sidebar, .topbar, .btn, .pager, .tabs, .no-print, .viewas-banner { display: none !important; } /* 打印时隐藏导航按钮与提示条 */
+  .main-area { margin: 0 !important; }                             /* 打印占满 */
+  .page-wrap { padding: 0; max-width: 100%; }                      /* 打印无内边距 */
+  .card { box-shadow: none; border: 1px solid #ddd; }              /* 卡片简化 */
+  body { background: #fff; }                                       /* 打印白底 */
+}
