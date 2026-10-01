@@ -1289,7 +1289,10 @@ async function clearBizData() {
 /* 所有数据初始化（恢复出厂：清空全部业务数据/设置/账号，重置默认 admin/DEFAULT_ADMIN_PWD） */
 async function factoryReset() {
   if (!Auth.user || Auth.user.role !== 'admin') { toast('只有管理员可以初始化', 'err'); return; }
-  var ok = await confirmBox('将清空【全部数据】并恢复到系统刚安装的初始状态：\n· 所有物料、出入库记录、操作日志、配料/BOM 项目全部删除\n· AI 配置等所有设置清空\n· 账号重置为默认管理员 admin / ' + DEFAULT_ADMIN_PWD + '\n\n⚠ 已开启多端同步时，此操作会连同云端和其他设备上的数据一起清空。\n\n此操作不可撤销，建议先到上面导出全库备份！确定继续吗？', '初始化');
+  /* 默认密码只在用兜底账号 admin 登录时才显示 —— 和欢迎弹窗一个口径。
+     否则别的管理员点一次"初始化"就又把它看去了。 */
+  var isBootstrapAdmin = !!(Auth.user && Auth.user.username === 'admin');        // 是不是那个兜底管理员账号
+  var ok = await confirmBox('将清空【全部数据】并恢复到系统刚安装的初始状态：\n· 所有物料、出入库记录、操作日志、配料/BOM 项目全部删除\n· AI 配置等所有设置清空\n· 账号重置为默认管理员 admin' + (isBootstrapAdmin ? ' / ' + DEFAULT_ADMIN_PWD : '（默认密码）') + '\n\n⚠ 重置后【你现在用的这个账号也会被删除】，需要用 admin + 默认密码重新登录。不知道默认密码的话，请先向设置它的人确认，否则会进不去。\n\n⚠ 已开启多端同步时，此操作会连同云端和其他设备上的数据一起清空。\n\n此操作不可撤销，建议先到上面导出全库备份！确定继续吗？', '初始化');
   if (!ok) return;
 
   /* 1) 业务数据：逐条打"删除墓碑"，而不是直接清表。
