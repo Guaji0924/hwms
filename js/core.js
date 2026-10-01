@@ -450,8 +450,25 @@ var Auth = {
     var uidSaved = localStorage.getItem('hwms_remember') || sessionStorage.getItem('hwms_session');  // 优先找"记住我"
     if (!uidSaved) return null;                               // 没有保存过会话
     var u = await DB.get('users', uidSaved);                   // 按保存的用户 id 查询
-    if (u && u.active && !u.deleted) { this.user = u; return u; }  // 账号存在、启用、且没被打墓碑：恢复登录
+    if (u && u.active && !u.deleted) {                         // 账号存在、启用、且没被打墓碑
+      this.user = u;                                           // 恢复登录
+      await this.touchLogin(u);                                // 顺手刷新"最近使用时间"
+      return u;                                                // 返回恢复出来的账号
+    }
     return null;                                              // 否则未登录（被删除的账号不能继续用）
+  },
+
+  /* 刷新"最近使用时间"：每次打开/刷新页面都会调用，但同一小时内只写一次。
+     为什么需要它：勾了"记住我"之后会话会一直保持，用户再也不会走一次输密码登录。
+     如果只在登录那一刻记录，用户管理里的这一列就会永远停在第一次登录那天，
+     完全看不出谁最近还在用这个系统。
+     为什么要节流：每写一次都会产生一条需要同步的数据，频繁刷新会造成无谓的上传。 */
+  touchLogin: async function (u) {
+    var now = Date.now();                                     // 当前时间
+    if (u.lastLogin && now - u.lastLogin < 3600000) return;     // 距离上次记录不到 1 小时：跳过，不写库
+    u.lastLogin = now;                                        // 更新"最近使用时间"
+    stampSync(u);                                             // 盖同步时间戳 → 这次改动才会传给其他设备
+    await DB.put('users', u);                                 // 写回本机
   },
 
   /* 登录：成功返回 true 并把会话写入本地存储 */

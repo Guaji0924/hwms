@@ -31,7 +31,7 @@ async function pageUsers() {
     if (q && (su.username || '').toLowerCase().indexOf(q) < 0 && (su.cls || '').toLowerCase().indexOf(q) < 0) continue;  // 关键词要命中姓名或班级
     shown.push(su);                                                       // 通过筛选，保留
   }
-  shown.sort(function (a, b) { return (b.lastLogin || 0) - (a.lastLogin || 0); });  // 最近登录在前
+  shown.sort(function (a, b) { return (b.lastLogin || 0) - (a.lastLogin || 0); });  // 最近使用在前
   /* 汇总所有出现过的班级（去重+排序），生成下拉选项 */
   var clsSet = {};                                                        // 班级去重集合
   for (var c = 0; c < alive.length; c++) { if (alive[c].cls) clsSet[alive[c].cls] = true; }  // 收集
@@ -55,7 +55,7 @@ async function pageUsers() {
       '<td style="font-size:12.5px">' + (u.cls ? escapeHtml(u.cls) : '<span style="color:var(--text-sub)">未填</span>') + '</td>' +  // 班级列
       '<td>' + roleHtml + '</td>' +
       '<td>' + manageHtml + '</td>' +
-      '<td style="font-size:12.5px">' + (u.lastLogin ? fmtDate(u.lastLogin) : '从未登录') + '</td>' +
+      '<td style="font-size:12.5px">' + (u.lastLogin ? fmtDate(u.lastLogin) : '从未使用') + '</td>' +
       '<td>' + (u.active ? '<span class="badge badge-green">正常</span>' : '<span class="badge badge-red">已停用</span>') + '</td>' +
       '<td style="white-space:nowrap">' +
         '<button class="btn btn-sm btn-outline" onclick="editUserClass(\'' + u.id + '\')">改班级</button> ' +  // 新增：随时改班级
@@ -99,7 +99,7 @@ async function pageUsers() {
         ((UserFilter.q || UserFilter.cls) ? '<button class="btn btn-sm btn-outline" onclick="UserFilter.q=\'\';UserFilter.cls=\'\';pageUsers()">清除筛选</button>' : '') +
       '</div>' +
       '<div class="table-wrap"><table class="tbl">' +
-        '<thead><tr><th>用户</th><th>班级</th><th>角色</th><th>临时管理权限</th><th>最近登录</th><th>状态</th><th>操作</th></tr></thead>' +
+        '<thead><tr><th>用户</th><th>班级</th><th>角色</th><th>临时管理权限</th><th>最近使用</th><th>状态</th><th>操作</th></tr></thead>' +
         '<tbody>' + (shown.length === 0
           ? '<tr><td colspan="7"><div class="empty">没有找到匹配的成员，换个关键词试试</div></td></tr>'  // 筛选后为空的提示（共 7 列）
           : rows) + '</tbody>' +
