@@ -275,7 +275,10 @@ async function pageSettings() {
     active: aiData.active,                                            // 默认配置 id
     list: aiData.list.map(function (x) { return Object.assign({ _open: false }, x); })  // 深拷贝，已有配置默认折叠
   };
-  var syncCfg = await DB.getSetting('syncConfig', { enabled: false, url: '', device: '', lastSync: 0 });  // 同步配置（每台设备各自一份）
+  var syncCfg = await DB.getSetting('syncConfig', {});                                                     // 本机保存的同步配置（从没配过是空对象）
+  var syncOn = syncCfg.enabledSet ? !!syncCfg.enabled : !!SYNC_DEFAULT.enabled;                             // 实际开关：成员定过用他的，否则跟随协会默认
+  var syncEffUrl = syncCfg.url || SYNC_DEFAULT.url || syncOwnOrigin();                                      // 实际使用的服务器地址（留空则自动取）
+  var syncEffKey = !!(syncCfg.key || SYNC_DEFAULT.key);                                                     // 实际是否已带密钥
   var theme = localStorage.getItem('hwms_theme') || 'light';                                   // 主题
   /* 分类管理表格 */
   var catRows = '';                                                                              // 行
@@ -290,20 +293,20 @@ async function pageSettings() {
     '<div class="page-head"><div><div class="page-title">系统设置</div><div class="page-desc">多端同步 / AI 接入 / 主题 / 分类管理</div></div></div>' +
     /* AI 配置（支持多个，由 aiEditHtml() 渲染编辑区） */
     aiEditHtml() +
-    /* 多端同步（每台设备都要各自配置一次，指向同一台服务器） */
+    /* 多端同步（默认已按协会统一设置，成员通常不用改；想改也能自己改） */
     '<div class="card">' +
       '<div class="card-title">' + ICONS.cloud + '多端同步（手机 / 平板 / 电脑共用一份数据）</div>' +
-      '<div class="ai-quote" style="margin-bottom:10px"><b>云端多端同步（免绑卡、免费、不休眠）</b><br>' +
-      '本系统已内置 Cloudflare Pages Functions 同步后端：把 <b>functions 目录 + d1-schema.sql</b> 一起部署到你的 Cloudflare Pages 项目，再绑定一个 D1 数据库，同步服务器地址就填<b>网页自己的地址</b>（如 https://hwms.pages.dev）。部署步骤见系统文件夹里的 <b>开发文档.md → 十九、部署 B</b>。<br>' +
-      '不想用云端，也可以照旧找一台常开电脑跑 server 目录当同步服务器（README.md 方式 C）。</div>' +
-      '<div class="form-item"><label><input type="checkbox" id="sync-enabled"' + (syncCfg.enabled ? ' checked' : '') + ' style="margin-right:6px" />启用多端同步</label>' +
+      '<div class="ai-quote" style="margin-bottom:10px"><b>已按协会统一设置好，通常不用动</b><br>' +
+      '系统默认就开启同步，服务器地址自动取<b>网页自己的地址</b>' + (syncEffKey ? '，密钥也已内置' : '') + '，所以成员打开网页就自动连上，不需要填任何东西。' +
+      '只有想单独用别的服务器时，才在下面改。部署后端见 <b>开发文档.md → 十九、部署 B</b>。</div>' +
+      '<div class="form-item"><label><input type="checkbox" id="sync-enabled"' + (syncOn ? ' checked' : '') + ' style="margin-right:6px" />启用多端同步</label>' +
       '<div class="form-hint">启用后：有网时自动与服务器同步，多人多设备实时共用同一份数据；断网时照常查询、登记，恢复网络后自动把离线操作补传上去。就算服务器重启丢了数据，各设备也会自动"补种"回去，不用担心。</div></div>' +
       '<div class="form-row">' +
-        '<div class="form-item"><label>同步服务器地址</label><input class="input" id="sync-url" value="' + escapeHtml(syncCfg.url) + '" placeholder="云端填网站自己的地址，如 https://hwms.pages.dev；局域网填 http://192.168.1.100:8787" /></div>' +
-        '<div class="form-item"><label>本机设备名（方便认账，随便起）</label><input class="input" id="sync-device" value="' + escapeHtml(syncCfg.device) + '" placeholder="如 张三-手机" /></div>' +
+        '<div class="form-item"><label>同步服务器地址（留空 = 自动用协会默认）</label><input class="input" id="sync-url" value="' + escapeHtml(syncCfg.url || '') + '" placeholder="' + (syncEffUrl ? '留空 = 自动使用 ' + escapeHtml(syncEffUrl) : '如 https://hwms.pages.dev') + '" /></div>' +
+        '<div class="form-item"><label>本机设备名（方便认账，随便起）</label><input class="input" id="sync-device" value="' + escapeHtml(syncCfg.device || '') + '" placeholder="如 张三-手机" /></div>' +
       '</div>' +
-      '<div class="form-item"><label>同步密钥（服务器端设置了 SYNC_KEY 环境变量时才需要填，两端一致才能同步；服务器没设就留空）</label><input class="input" id="sync-key" type="password" value="' + escapeHtml(syncCfg.key || '') + '" placeholder="服务器没设密钥就留空" /></div>' +
-      '<div class="form-hint">云端（Pages Functions）方式：在 Cloudflare Pages 项目的"环境变量"里加一条 SYNC_KEY，再在这里填同一个值。局域网方式：server 目录里"启动同步服务器.bat"设了 SYNC_KEY 就填，没设留空。</div>' +
+      '<div class="form-item"><label>同步密钥（留空 = 用协会默认）</label><input class="input" id="sync-key" type="password" value="' + escapeHtml(syncCfg.key || '') + '" placeholder="' + (syncEffKey ? '留空 = 使用协会统一密钥' : '服务器没设密钥就留空') + '" /></div>' +
+      '<div class="form-hint">协会统一默认值写在 <code>js/sync.js</code> 顶部的 <code>SYNC_DEFAULT</code> 里（地址、密钥、是否默认开启）。改了那一处重新部署，全体成员就都跟着变；成员在这里填过就以自己填的为准。</div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">' +
         '<button class="btn btn-primary" onclick="saveSyncConfig()">保存同步设置</button>' +
         '<button class="btn btn-outline" onclick="testSyncServer()">测试服务器连接</button>' +
@@ -555,20 +558,47 @@ async function saveAIConfig() {
 
 /* ==================== 3. 多端同步设置 ==================== */
 
-/* 保存同步配置（每台设备各自保存一份，指向同一台服务器） */
+/* 保存同步配置（admin 修改后会同步到服务器，全体成员自动生效） */
 async function saveSyncConfig() {
   var old = await DB.getSetting('syncConfig', {});                         // 旧配置（保留上次同步时间）
   var cfg = {                                                              // 收集表单
+    enabledSet: true,                                                      // 标记：成员已手动定过开关，之后不再跟随协会默认
     enabled: $('#sync-enabled').checked,                                   // 开关
-    url: $('#sync-url').value.trim().replace(/\/+$/, ''),                  // 服务器地址（去掉末尾斜杠）
-    key: $('#sync-key') ? $('#sync-key').value.trim() : '',                // 同步密钥（云端部署用）
+    url: $('#sync-url').value.trim().replace(/\/+$/, ''),                  // 成员自己填的地址（留空 = 用协会默认/网页自己的地址）
+    key: $('#sync-key') ? $('#sync-key').value.trim() : '',                // 成员自己填的密钥（留空 = 用协会统一密钥）
     device: $('#sync-device').value.trim() || '未命名设备',                 // 设备名
     lastSync: old.lastSync || 0                                            // 上次同步时间原样保留
   };
-  if (cfg.enabled && !cfg.url) { toast('启用同步需要填写服务器地址', 'err'); return; }  // 校验
+  /* 校验：启用同步时，必须能确定一个服务器地址（自己填的 或 协会默认 或 网页自己的地址） */
+  var effUrl = cfg.url || SYNC_DEFAULT.url || syncOwnOrigin();             // 合成实际地址
+  if (cfg.enabled && !effUrl) { toast('启用同步需要服务器地址；当前是本地文件打开，无法自动取网页地址，请手动填写', 'err'); return; }  // 校验
+
+  /* admin 修改时，同时发送到服务器保存（全体成员自动同步） */
+  var isAdmin = (typeof Auth !== 'undefined' && Auth.user && Auth.user.role === 'admin');
+  if (isAdmin && effUrl) {
+    try {
+      var adminToken = cfg.key || SYNC_DEFAULT.key || '';                  // 用密钥作为 admin token
+      await fetch(effUrl + '/api/sync-config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-token': adminToken                                     // 鉴权头
+        },
+        body: JSON.stringify({
+          enabled: cfg.enabled,
+          url: cfg.url,                                                    // 留空表示"用当前域名"
+          key: cfg.key                                                     // 服务器端保存的密钥
+        })
+      });
+    } catch (e) {
+      /* 服务器可能没启动或旧版本，静默失败不影响本地保存 */
+      console.log('同步配置到服务器失败（可能服务器未启动或是旧版本）:', e);
+    }
+  }
+
   await DB.setSetting('syncConfig', cfg);                                  // 写库
   if (typeof Sync !== 'undefined' && Sync.applyConfig) Sync.applyConfig(cfg);  // 通知同步引擎立即生效
-  await Log.add('修改同步设置', cfg.enabled ? '启用，服务器 ' + cfg.url : '停用');  // 日志
+  await Log.add('修改同步设置', cfg.enabled ? '启用，服务器 ' + effUrl : '停用');  // 日志
   toast('同步设置已保存' + (cfg.enabled ? '，稍后自动开始同步' : ''), 'ok');  // 提示
 }
 
@@ -577,7 +607,8 @@ async function testSyncServer() {
   var box = $('#sync-test-result');                                        // 结果框
   box.style.display = 'block';                                             // 显示
   box.textContent = '正在连接服务器……';                                     // 加载提示
-  var url = $('#sync-url').value.trim().replace(/\/+$/, '');               // 取地址
+  var url = $('#sync-url').value.trim().replace(/\/+$/, '');               // 取成员填的地址
+  if (!url) url = SYNC_DEFAULT.url || syncOwnOrigin();                     // 没填就用协会默认/网页自己的地址
   if (!url) { box.innerHTML = '<span style="color:var(--danger)">请先填写服务器地址</span>'; return; }  // 校验
   try {                                                                    // 尝试探活
     var res = await fetch(url + '/api/ping', { method: 'GET' });           // 服务器提供 /api/ping

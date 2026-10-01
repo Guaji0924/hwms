@@ -25,6 +25,7 @@ var crypto = require('crypto');      // 加密工具（时序安全比较密钥�
 var PORT = process.env.PORT || 8787;                     // 端口（云平台自动分配 / 本机默认 8787）
 var SYNC_KEY = process.env.SYNC_KEY || '';               // 同步密钥（云端部署强烈建议设置，防止陌生人读写数据）
 var DATA_FILE = path.join(__dirname, 'data.json');       // 数据文件位置
+var CONFIG_FILE = path.join(__dirname, 'sync-config.json'); // 同步配置文件位置（admin 在前端改的）
 var WEB_ROOT = path.join(__dirname, '..');               // 网站根目录 = 上一级（hwms 文件夹）
 var VERSION = '2.0';                                     // 服务器版本号
 
@@ -109,6 +110,51 @@ function totalRows() {
     for (var id in table) n++;                              // 逐条累加
   }
   return n;                                                 // 总条数
+}
+
+/* ==================== 3.5 同步配置管理（admin 在前端改，成员自动同步） ==================== */
+
+/* 内存中的同步配置（启动时从文件恢复，运行时 admin 可改） */
+var syncConfig = {
+  enabled: true,                                             // 默认开启同步
+  url: '',                                                 // 留空 = 自动用当前域名
+  key: SYNC_KEY                                            // 默认用环境变量的密钥
+};
+
+/* 启动时读取同步配置文件 */
+function loadSyncConfig() {
+  try {
+    var raw = fs.readFileSync(CONFIG_FILE, 'utf8');         // 读文件
+    var obj = JSON.parse(raw);                              // 解析 JSON
+    if (obj && typeof obj === 'object') {
+      syncConfig.enabled = obj.enabled !== false;             // 默认 true
+      syncConfig.url = obj.url || '';                         // 留空 = 自动
+      syncConfig.key = obj.key || SYNC_KEY || '';             // 优先用文件里的，没有就用环境变量
+    }
+    console.log('[启动] 已从 sync-config.json 恢复同步配置');
+  } catch (e) {
+    console.log('[启动] 没有 sync-config.json，使用默认配置');
+  }
+}
+
+/* 保存同步配置到文件 */
+function saveSyncConfig() {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(syncConfig, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[保存同步配置失败]', e.message);
+  }
+}
+
+/* 校验 admin token：简单校验，从请求头里取 x-admin-token */
+function adminOk(req, res) {
+  var token = req.headers['x-admin-token'] || '';
+  /* 简单规则：token 就是 SYNC_KEY 的 md5 前 8 位，或者 SYNC_KEY 本身 */
+  var expected = SYNC_KEY ? crypto.createHash('md5').update(SYNC_KEY).digest('hex').slice(0, 8) : '';
+  if (!SYNC_KEY) return true;                               // 没设密钥 = 不校验（局域网自用）
+  if (token === expected || token === SYNC_KEY) return true;
+  sendJson(res, 403, { ok: false, message: '权限不足' });
+  return false;
 }
 
 /* ==================== 4. HTTP 服务 ==================== */
@@ -218,6 +264,29 @@ var server = http.createServer(function (req, res) {
   if (urlPath === '/api/ping' && req.method === 'GET') {    // 探活：设置页"测试连接"用
     return sendJson(res, 200, { ok: true, version: VERSION, serverTime: Date.now(), needKey: !!SYNC_KEY });  // needKey 告诉客户端服务器是否要求密钥
   }
+  if (urlPath === '/api/sync-config' && req.method === 'GET') {  // 获取同步配置：成员打开网页时自动拉取
+    return sendJson(res, 200, {
+      ok: true,
+      enabled: syncConfig.enabled,
+      url: syncConfig.url,                                   // 留空表示"用当前域名"
+      key: syncConfig.key ? '***' : ''                     // 密钥掩码显示，实际同步时从服务器环境变量校验
+    });
+  }
+  if (urlPath === '/api/sync-config' && req.method === 'POST') {  // 保存同步配置：admin 在前端设置页修改
+    if (!adminOk(req, res)) return;                         // 鉴权
+    readBody(req).then(function (body) {
+      if (body && typeof body === 'object') {
+        syncConfig.enabled = body.enabled !== false;          // 默认 true
+        syncConfig.url = (body.url || '').trim();           // 去空格
+        syncConfig.key = (body.key || '').trim();           // 去空格
+        saveSyncConfig();                                   // 持久化
+      }
+      return sendJson(res, 200, { ok: true, config: syncConfig });
+    }).catch(function (err) {
+      sendJson(res, 400, { ok: false, message: err.message });
+    });
+    return;
+  }
   if (urlPath === '/api/pull' && req.method === 'GET') {    // 拉取：客户端下载新变化
     if (!keyOk()) return;                                   // 密钥不对拒收
     var since = parseInt(query.since, 10) || 0;             // 客户端水位
@@ -242,6 +311,7 @@ var server = http.createServer(function (req, res) {
 /* ==================== 5. 启动 ==================== */
 
 loadDb();                                                   // 先恢复数据
+loadSyncConfig();                                           // 再恢复同步配置
 server.listen(PORT, '0.0.0.0', function () {                // 监听所有网卡（局域网可访问）
   console.log('==============================================');
   console.log('  物料管家同步服务器 v' + VERSION + ' 已启动');

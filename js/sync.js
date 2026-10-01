@@ -16,14 +16,53 @@
    服务器端见 server/server.js（一个零依赖的 Node 小服务器）。
    ============================================================ */
 
+/* ==================== 0. 协会统一的默认同步配置 ==================== */
+/* admin 在服务器端设置后，全体成员打开网页就自动从服务器拉取配置，谁都不用自己填；
+   成员仍可在「系统设置 → 多端同步」里单独改，改过之后优先用他自己填的。 */
+var SYNC_DEFAULT = {
+  enabled: true,     // 默认就开启多端同步（填 false 则默认不开，需要各自手动开启）
+  url: '',           // 服务器地址：留空 = 自动用"网页自己的地址"
+  key: ''            // 同步密钥：从服务器拉取
+};
+
+/* 取"网页自己的地址"：只有通过 http / https 打开才有意义（双击本地文件没有服务器） */
+function syncOwnOrigin() {
+  if (location.protocol === 'http:' || location.protocol === 'https:') return location.origin;  // 有域名就返回它
+  return '';                                                                                     // file:// 打开：拿不到服务器地址
+}
+
+/* 从服务器拉取最新同步配置（admin 改后成员自动同步） */
+async function fetchServerConfig() {
+  try {
+    var origin = syncOwnOrigin();                                // 当前网页的域名
+    if (!origin) return null;                                    // file:// 打开：没有服务器
+    var res = await fetch(origin + '/api/sync-config', {         // 请求服务器配置
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (!res.ok) return null;                                    // 服务器没这个接口（旧版本）
+    var data = await res.json();                                 // 解析应答
+    if (!data || !data.ok) return null;                          // 服务器返回错误
+    return {
+      enabled: data.enabled !== false,                           // 默认 true
+      url: data.url || '',                                       // 服务器指定的地址（留空 = 用当前域名）
+      key: data.key || ''                                        // 服务器下发的密钥（可能掩码显示）
+    };
+  } catch (e) {
+    return null;                                                 // 网络错误、服务器未启动等
+  }
+}
+
 /* ==================== 1. 同步引擎主体 ==================== */
 
 var Sync = {
   /* 运行状态（内存里，不进数据库） */
   state: {
-    enabled: false,          // 是否启用同步（来自设置页）
-    url: '',                 // 同步服务器地址（自建服务器，如局域网 http://192.168.1.100:8787）
-    key: '',                 // 同步密钥（服务器设置了 SYNC_KEY 环境变量时两端一致；没设留空）
+    enabled: false,          // 是否启用同步（默认取 SYNC_DEFAULT.enabled，成员可在设置页改）
+    url: '',                 // 实际使用的服务器地址（已解析：成员自己填的 > 协会默认 > 网页自己的地址）
+    key: '',                 // 实际使用的同步密钥（已解析：成员自己填的 > 协会默认）
+    userUrl: '',             // 成员自己在设置页填的地址（留空 = 用协会默认）
+    userKey: '',             // 成员自己在设置页填的密钥（留空 = 用协会默认）
     device: '',              // 本机设备名（方便在服务器日志里认账）
     lastSync: 0,             // 上次同步到的时间点（毫秒），下次只同步这之后的变化
     syncing: false,          // 正在同步中（防止重复跑）
@@ -35,16 +74,35 @@ var Sync = {
      settings 表特殊：只同步"物料分类树"，其余（AI 配置、同步配置等）留在本机 */
   STORES: ['materials', 'records', 'users', 'logs'],
 
+  /* ---------- 合成实际要用的地址与密钥 ----------
+     优先级：成员自己填的 > 协会默认（SYNC_DEFAULT） > 网页自己的地址
+     成员留空就自动跟随协会统一设置，不用自己填任何东西 */
+  resolve: function (userUrl, userKey) {
+    this.state.userUrl = userUrl || '';                                              // 记下成员自己填的地址（可能为空）
+    this.state.userKey = userKey || '';                                              // 记下成员自己填的密钥（可能为空）
+    this.state.url = this.state.userUrl || SYNC_DEFAULT.url || syncOwnOrigin();      // 依次回退，取到第一个非空的
+    this.state.key = this.state.userKey || SYNC_DEFAULT.key || '';                   // 密钥同理
+  },
+
   /* ---------- 启动：应用初始化时调用一次 ---------- */
   init: async function () {
-    var cfg = await DB.getSetting('syncConfig', null);          // 读配置
-    if (cfg) {                                                  // 有配置就恢复
-      this.state.enabled = !!cfg.enabled;                       // 开关
-      this.state.url = cfg.url || '';                           // 服务器地址
-      this.state.key = cfg.key || '';                           // 同步密钥
-      this.state.device = cfg.device || '';                     // 设备名
-      this.state.lastSync = cfg.lastSync || 0;                  // 上次同步时间
+    var cfg = await DB.getSetting('syncConfig', null);          // 读本机保存的配置（从没配过是 null）
+    this.state.device = cfg ? (cfg.device || '') : '';          // 设备名
+    this.state.lastSync = cfg ? (cfg.lastSync || 0) : 0;        // 上次同步时间
+
+    /* 第一步：尝试从服务器拉取最新配置（admin 改后成员自动同步） */
+    var serverCfg = await fetchServerConfig();                   // 请求服务器配置
+    if (serverCfg) {
+      SYNC_DEFAULT.enabled = serverCfg.enabled;                  // 更新默认配置
+      SYNC_DEFAULT.url = serverCfg.url;
+      SYNC_DEFAULT.key = serverCfg.key;
     }
+
+    /* 开关：成员在设置页手动定过（enabledSet）就用他的，否则跟随服务器/协会默认 */
+    this.state.enabled = (cfg && cfg.enabledSet) ? !!cfg.enabled : !!SYNC_DEFAULT.enabled;
+    this.resolve(cfg ? cfg.url : '', cfg ? cfg.key : '');       // 合成地址与密钥
+    if (!this.state.url) this.state.enabled = false;            // 拿不到服务器地址（如本地双击打开）→ 只能本地模式
+
     var self = this;                                            // 保存 this
     /* 浏览器"联网/断网"事件：网络一恢复就立刻同步一次 */
     window.addEventListener('online', function () {
@@ -66,12 +124,12 @@ var Sync = {
 
   /* ---------- 设置页保存配置后调用：立即生效 ---------- */
   applyConfig: function (cfg) {
-    this.state.enabled = !!cfg.enabled;                         // 开关
-    this.state.url = cfg.url || '';                             // 地址
-    this.state.key = cfg.key || '';                             // 密钥
+    this.state.enabled = !!cfg.enabled;                         // 开关（成员自己定的）
     this.state.device = cfg.device || '';                       // 设备名
     this.state.lastSync = cfg.lastSync || 0;                    // 保留上次同步时间
     this.state.lastError = '';                                  // 清空旧错误
+    this.resolve(cfg.url, cfg.key);                             // 合成地址与密钥
+    if (!this.state.url) this.state.enabled = false;            // 没地址就没法同步，退回本地模式
     this.startTimer();                                          // 重启定时器
     updateNetState();                                           // 刷新顶栏
     if (this.state.enabled && navigator.onLine) this.syncNow().catch(function () {});  // 立刻试同步
@@ -217,10 +275,12 @@ var Sync = {
 
   /* ---------- 把同步进度（lastSync）存进数据库，刷新页面不丢 ---------- */
   persistState: async function () {
+    var old = await DB.getSetting('syncConfig', {}) || {};        // 旧配置（用来保留"是否手动定过开关"的标记）
     var cfg = {                                                  // 重组配置对象
+      enabledSet: !!old.enabledSet,                              // 保留标记：成员没手动定过就继续跟随协会默认
       enabled: this.state.enabled,
-      url: this.state.url,
-      key: this.state.key,                                       // 同步密钥也要存，刷新后还在
+      url: this.state.userUrl,                                   // 只存成员自己填的（留空 = 继续用协会默认/网页自己的地址）
+      key: this.state.userKey,                                   // 同上
       device: this.state.device,
       lastSync: this.state.lastSync
     };
