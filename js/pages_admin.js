@@ -69,13 +69,20 @@ async function pageUsers() {
          admin   → 管理员：全部权限（物料 / 用户 / 设置 / 数据）
        原来的"临时管理权限"列、"设为管理员 / 降为成员"按钮都由它取代。 */
     var tier = userRoleTier(u);                                             // 当前档位：member / manager / admin
+    /* 角色格：平时就是一个彩色徽章（看着干净，和表格里其他徽章一个样），点上去才弹选择。
+       做法是把一个透明的原生 select 铺在徽章上面 —— 外观完全由徽章决定，
+       弹出的却是浏览器原生选择器（手机上体验最好），不用自己写一套下拉菜单。
+       末尾的小三角只是提示"这里能点"。 */
+    var roleBadge = '<span class="badge ' + ROLE_TIER_BADGE[tier] + '">' + ROLE_TIER_LABEL[tier] + '<span style="opacity:.5;font-size:9px">▾</span></span>';
     var roleCell = isSelf
-      ? '<span class="badge ' + ROLE_TIER_BADGE[tier] + '">' + ROLE_TIER_LABEL[tier] + '</span>'  // 自己：只显示不给改，防止把自己降级后没人能管用户
-      : '<select class="select" style="width:auto;min-width:136px;padding:4px 8px;font-size:12.5px" onchange="setUserRoleTier(\'' + u.id + '\', this.value)" title="修改角色">' +
-          '<option value="member"' + (tier === 'member' ? ' selected' : '') + '>成员</option>' +
-          '<option value="manager"' + (tier === 'manager' ? ' selected' : '') + '>成员 + 物料管理</option>' +
-          '<option value="admin"' + (tier === 'admin' ? ' selected' : '') + '>管理员</option>' +
-        '</select>';
+      ? roleBadge                                                              // 自己：只显示不给改，防止把自己降级后没人能管用户
+      : '<span class="role-pick" title="点击修改角色">' + roleBadge +
+          '<select aria-label="修改角色" onchange="setUserRoleTier(\'' + u.id + '\', this.value)">' +
+            '<option value="member"' + (tier === 'member' ? ' selected' : '') + '>成员</option>' +
+            '<option value="manager"' + (tier === 'manager' ? ' selected' : '') + '>成员 + 物料管理</option>' +
+            '<option value="admin"' + (tier === 'admin' ? ' selected' : '') + '>管理员</option>' +
+          '</select>' +
+        '</span>';
     rows += '<tr' + (isSelf ? ' style="background:var(--primary-light)"' : '') + '>' +  // 自己高亮
       '<td><div style="display:flex;align-items:center;gap:10px"><span class="user-avatar" style="width:30px;height:30px;font-size:13px;background:' + ROLE_TIER_AVATAR[tier] + '">' + escapeHtml(u.username.charAt(0).toUpperCase()) + '</span><b>' + escapeHtml(u.username) + (isSelf ? ' <span style="font-size:11px;color:var(--text-sub)">（我）</span>' : '') + '</b></div></td>' +
       /* 班级列：双击（或手机上长按）就地编辑，替代原来的"改班级"按钮 */
@@ -105,8 +112,8 @@ async function pageUsers() {
     /* 权限说明卡 */
     '<div class="card" style="padding:14px 18px">' +
       '<div style="display:flex;gap:26px;flex-wrap:wrap;font-size:12.5px">' +
-        '<div><span class="badge badge-purple">管理员</span> 全部权限：管理物料 / 用户 / 设置 / 数据</div>' +
-        '<div><span class="badge badge-green">成员 + 物料管理</span> 额外可编辑物料档案与导入</div>' +
+        '<div><span class="badge badge-red">管理员</span> 全部权限：管理物料 / 用户 / 设置 / 数据</div>' +
+        '<div><span class="badge badge-purple">成员 + 物料管理</span> 额外可编辑物料档案与导入</div>' +
         '<div><span class="badge badge-blue">成员</span> 可查询、出入库、智能配料、导出</div>' +
       '</div>' +
     '</div>' +

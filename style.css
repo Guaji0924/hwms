@@ -398,6 +398,13 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; } /* 表�
   -webkit-user-select: none; user-select: none;                  /* 长按过程中不选中文字 */
 }
 .cls-cell input { -webkit-user-select: text; user-select: text; }  /* 但输入框里的字要能正常选中编辑 */
+.role-pick { position: relative; display: inline-block; padding: 8px 6px; margin: -8px -6px; }  /* 角色格：外面看是徽章，里面盖着个透明下拉；负外边距把点击区域撑大（手机上更好按），不影响排版 */
+.role-pick select {                                               /* 透明铺满整个徽章：只负责接点击、弹浏览器原生选择器 */
+  position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; border: none; background: none; padding: 0;
+  -webkit-appearance: none; appearance: none; font-size: 12px;
+}
+.role-pick:hover .badge { filter: brightness(.94); }              /* 悬停微微加深，暗示这里能点 */
 .tbl tbody tr:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); } /* 行悬停：主色微染，与表头区分 */
 .t-link { color: var(--primary); cursor: pointer; font-weight: 600; }     /* 所有可点击名称（表格内外统一主题色+手型） */
 .tbl .t-link { color: var(--primary); cursor: pointer; font-weight: 600; } /* 可点击的名称 */
