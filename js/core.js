@@ -434,6 +434,11 @@ var DB = {
 
 /* ==================== 5. Auth：登录与权限 ==================== */
 
+/* 兜底管理员（首次运行自动创建的那个 admin 账号）的默认密码。
+   有三处会用到它：core.js 建号、main.js 首次登录提示、pages_stats.js 恢复出厂。
+   写成常量是为了避免"改了这头忘了那头"，导致恢复出厂后的密码跟新建时对不上。 */
+var DEFAULT_ADMIN_PWD = '202306ZNKZXH.202610admin-LGJ';
+
 var Auth = {
   user: null,                                                 // 当前登录的用户（内存中）
 
@@ -444,7 +449,7 @@ var Auth = {
     for (var k = 0; k < users.length; k++) { if (!users[k].deleted) aliveCount++; }  // 墓碑不算
     if (aliveCount === 0) {                                   // 一个有效用户都没有（首次运行）
       var salt = uid('salt');                                 // 随机盐
-      var hash = await hashPassword('202306ZNKZXH.2026admin-lgj', salt);        // 默认密码 202306ZNKZXH.2026admin-lgj 的哈希
+      var hash = await hashPassword(DEFAULT_ADMIN_PWD, salt);                    // 默认密码的哈希
       await DB.put('users', {                                 // 创建默认管理员
         /* id 故意写死、不随机：每台新设备第一次打开都会执行到这里，
            如果 id 随机，同步之后服务器上就会堆出好几个同名的 admin。

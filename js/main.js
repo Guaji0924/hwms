@@ -178,6 +178,10 @@ async function maybeShowWelcome() {
     if (alerts.length > 0) toast('注意：有 ' + alerts.length + ' 种物料库存告急，记得补货', 'warn');  // 提醒
     return;                                                                            // 结束
   }
+  /* 默认密码那一行只在"用兜底账号 admin 登录"时才显示。
+     每台设备第一次打开都会弹一次这个欢迎窗，如果对谁都显示，
+     等于把默认密码给所有管理员看光了 —— 别的账号不该知道它。 */
+  var isBootstrapAdmin = !!(Auth.user && Auth.user.username === 'admin');          // 是不是那个兜底管理员账号（首次运行自动建的，用户名固定是 admin）
   await DB.setSetting('welcomeShown', true);                                             // 写标记
   openModal('欢迎使用物料管家 🎉', '' +
     '<div style="font-size:13.5px;line-height:1.9">' +
@@ -185,7 +189,9 @@ async function maybeShowWelcome() {
       '1、去「数据管理」载入示例数据体验全部功能（之后可一键清空）；<br>' +
       '2、或在「物料库」手动录入 / Excel 批量导入你们的真实元件；<br>' +
       '3、在「用户管理」添加协会成员账号，开始日常出入库登记。<br><br>' +
-      '<b>安全提示：</b>默认管理员账号是 admin/202306ZNKZXH.2026admin-lgj，请立即修改密码！<br>' +
+      (isBootstrapAdmin
+        ? '<b>安全提示：</b>你现在用的还是默认管理员账号 admin/' + DEFAULT_ADMIN_PWD + '，请立即修改密码！<br>'
+        : '') +
       '<b>新手引导：</b>左侧菜单有「使用手册」，新成员看完就能上手日常领料归还。<br><br>' +
       '<b>换电脑 / 多设备：</b>数据存在本机浏览器里。换设备前先在「数据管理」导出全库备份，' +
       '在新设备导入即可；局域网内把整个 hwms 文件夹放到一台常开的电脑（或树莓派）上，' +

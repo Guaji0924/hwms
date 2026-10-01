@@ -956,12 +956,12 @@ window.addEventListener('resize', function () { if (typeof alignDataCols === 'fu
 
 async function exportMaterialsCSV() {
   var mats = State.materials;                                              // 有效物料
-  var rows = [['编号', '名称', '型号/规格', '封装', '位置编号', '母分类', '子分类', '标签', '单位', '存放位置', '单价', '库存', '预警线', '丝印', '别称', '购买链接', '供应商', '用途描述']];  // 表头
+  var rows = [['编号', '名称', '型号/规格', '封装', '位置编号', '母分类', '子分类', '标签', '单位', '存放位置', '单价', '库存', '预警线', '丝印', '别称', '购买链接', '供应商', '数据手册', '用途描述']];  // 表头（列顺序与物料表单一致）
   for (var i = 0; i < mats.length; i++) {                                    // 遍历
     var m = mats[i];                                                          // 当前
     rows.push([m.code || '', m.name, m.model || '', m.pkg || '', m.locNo || '', m.cat || '', m.sub || '',    // 基本信息
       (m.tags || []).join('；'), m.unit || '', m.loc || '', m.price || 0, m.stock || 0,  // 库存信息
-      m.minStock || 0, m.silk || '', m.alias || '', m.link || '', m.supplier || '', m.desc || '']);  // 其他
+      m.minStock || 0, m.silk || '', m.alias || '', m.link || '', m.supplier || '', m.datasheet || '', m.desc || '']);  // 其他
   }
   downloadFile(toCSV(rows), '物料清单_' + fmtDateShort(Date.now()) + '.csv', 'text/csv');  // 下载
   await DB.setSetting('lastExportAt', Date.now());                             // 记时间
@@ -987,9 +987,9 @@ async function exportAllRecordsCSV() {
 /* 下载导入模板 */
 function downloadImportTemplate() {
   var rows = [
-    ['编号', '名称', '型号/规格', '封装', '位置编号', '母分类', '子分类', '标签', '单位', '存放位置', '单价', '库存', '预警线', '丝印', '别称', '购买链接', '供应商', '用途描述'],
-    ['', '示例：光敏电阻传感器', 'GL5528 模块', '模块', 'A-2-02', '传感器', '光/颜色', '常用；感光', '个', 'A架-2层-02盒', '2.5', '10', '3', 'GL5528', '光敏；光电阻', '', '立创商城', '检测环境光照强度，智能台灯/光控开关用'],
-    ['', '示例：1kΩ 电阻', '1/4W 直插', '0805', 'D-1-01', '基础元件', '电阻', '常用', '个', 'D架-1层-01盒', '0.05', '300', '50', '102', '电阻；1k', '', '', '最常用限流电阻']
+    ['编号', '名称', '型号/规格', '封装', '位置编号', '母分类', '子分类', '标签', '单位', '存放位置', '单价', '库存', '预警线', '丝印', '别称', '购买链接', '供应商', '数据手册', '用途描述'],
+    ['', '示例：光敏电阻传感器', 'GL5528 模块', '模块', 'A-2-02', '传感器', '光/颜色', '常用；感光', '个', 'A架-2层-02盒', '2.5', '10', '3', 'GL5528', '光敏；光电阻', '', '立创商城', '', '检测环境光照强度，智能台灯/光控开关用'],
+    ['', '示例：1kΩ 电阻', '1/4W 直插', '0805', 'D-1-01', '基础元件', '电阻', '常用', '个', 'D架-1层-01盒', '0.05', '300', '50', '102', '电阻；1k', '', '', '', '最常用限流电阻']
   ];                                                                              // 模板+两行示例
   downloadFile(toCSV(rows), '物料导入模板.csv', 'text/csv');                         // 下载
   toast('模板已下载，用 Excel/WPS 填好后导入', 'ok');                                  // 提示
@@ -1007,13 +1007,23 @@ async function importMaterialsCSV(input) {
       var rows = parseCSV(reader.result);                                              // 解析 CSV
       if (rows.length < 2) { toast('文件里没有数据行', 'err'); return; }                 // 只有表头
       var head = rows[0];                                                              // 表头行
-      /* 定位列号：按表头文字找，找不到就按固定位置 */
+      /* 定位列号：优先按表头文字匹配。
+         只有"表头里一个列名都没认出来"时才退回按固定位置 —— 否则像加"数据手册"列之前导出的老 CSV，
+         按位置猜会把这列指到"用途描述"上，等于把用途描述写进数据手册。 */
       var col = {};                                                                     // 列名->下标
-      var names = ['编号', '名称', '型号', '封装', '位置编号', '母分类', '子分类', '标签', '单位', '存放位置', '单价', '库存', '预警线', '丝印', '别称', '购买链接', '供应商', '用途描述'];  // 期望列
+      var names = ['编号', '名称', '型号', '封装', '位置编号', '母分类', '子分类', '标签', '单位', '存放位置', '单价', '库存', '预警线', '丝印', '别称', '购买链接', '供应商', '数据手册', '用途描述'];  // 期望列
+      var hasHeader = false;                                                             // 表头里认出了至少一个列名
+      for (var h0 = 0; h0 < head.length && !hasHeader; h0++) {                             // 先扫一遍表头
+        for (var n0 = 0; n0 < names.length; n0++) {                                        // 逐个比列名
+          if (head[h0] && String(head[h0]).indexOf(names[n0]) >= 0) { hasHeader = true; break; }   // 认出来了
+        }
+      }
       for (var i = 0; i < names.length; i++) {                                          // 遍历期望列
-        col[names[i]] = i;                                                               // 默认按位置
-        for (var h = 0; h < head.length; h++) {                                           // 再按表头文字精确匹配
-          if (head[h] && head[h].indexOf(names[i]) >= 0) { col[names[i]] = h; break; }      // 匹配到就用
+        col[names[i]] = hasHeader ? -1 : i;                                              // 有表头：先当"这列不存在"；无表头：按位置
+        if (hasHeader) {                                                                  // 有表头就按文字找
+          for (var h = 0; h < head.length; h++) {                                          // 扫表头
+            if (head[h] && String(head[h]).indexOf(names[i]) >= 0) { col[names[i]] = h; break; }   // 匹配到就用
+          }
         }
       }
       /* 建一个编号->物料的索引，方便判断"更新还是新增" */
@@ -1027,7 +1037,7 @@ async function importMaterialsCSV(input) {
       var toRec = [];                                                                        // 待写入调整记录
       for (var r = 1; r < rows.length; r++) {                                                // 数据行
         var cells = rows[r];                                                                  // 当前行
-        var g = function (name) { return (cells[col[name]] !== undefined) ? String(cells[col[name]]).trim() : ''; };  // 取列值
+        var g = function (name) { var ci = col[name]; return (ci >= 0 && cells[ci] !== undefined) ? String(cells[ci]).trim() : ''; };  // 取列值（这列不存在就返回空串）
         var name = g('名称');                                                                 // 名称
         if (!name) continue;                                                                  // 空行跳过
         var code = g('编号');                                                                   // 编号
@@ -1051,6 +1061,7 @@ async function importMaterialsCSV(input) {
           exist.alias = g('别称');
           exist.link = g('购买链接');
           exist.supplier = g('供应商');
+          if (col['数据手册'] >= 0) exist.datasheet = g('数据手册');                                  // 老版本导出的 CSV 没这一列，读不到就保持原值，别清空
           exist.desc = g('用途描述');
           exist.deleted = false;                                                                  // 导入视为恢复
           exist.updatedAt = Date.now();
@@ -1074,7 +1085,8 @@ async function importMaterialsCSV(input) {
             unit: g('单位') || '个', loc: g('存放位置'), locNo: g('位置编号'), pkg: g('封装'),
             price: parseFloat(g('单价') || '0') || 0, stock: newStock,
             minStock: parseInt(g('预警线') || '0', 10) || 0,
-            silk: g('丝印'), alias: g('别称'), link: g('购买链接'), supplier: g('供应商'), desc: g('用途描述'),
+            silk: g('丝印'), alias: g('别称'), link: g('购买链接'), supplier: g('供应商'),
+            datasheet: g('数据手册'), desc: g('用途描述'),
             createdAt: Date.now(), updatedAt: Date.now()
           };
           byCode[nm.code] = nm;                                                                         // 索引（防止表内重复编号）
@@ -1274,10 +1286,10 @@ async function clearBizData() {
   pageData();                                                                                                                // 刷新页
 }
 
-/* 所有数据初始化（恢复出厂：清空全部业务数据/设置/账号，重置默认 admin/202306ZNKZXH.2026admin-lgj） */
+/* 所有数据初始化（恢复出厂：清空全部业务数据/设置/账号，重置默认 admin/DEFAULT_ADMIN_PWD） */
 async function factoryReset() {
   if (!Auth.user || Auth.user.role !== 'admin') { toast('只有管理员可以初始化', 'err'); return; }
-  var ok = await confirmBox('将清空【全部数据】并恢复到系统刚安装的初始状态：\n· 所有物料、出入库记录、操作日志、配料/BOM 项目全部删除\n· AI 配置等所有设置清空\n· 账号重置为默认管理员 admin / 202306ZNKZXH.2026admin-lgj\n\n⚠ 已开启多端同步时，此操作会连同云端和其他设备上的数据一起清空。\n\n此操作不可撤销，建议先到上面导出全库备份！确定继续吗？', '初始化');
+  var ok = await confirmBox('将清空【全部数据】并恢复到系统刚安装的初始状态：\n· 所有物料、出入库记录、操作日志、配料/BOM 项目全部删除\n· AI 配置等所有设置清空\n· 账号重置为默认管理员 admin / ' + DEFAULT_ADMIN_PWD + '\n\n⚠ 已开启多端同步时，此操作会连同云端和其他设备上的数据一起清空。\n\n此操作不可撤销，建议先到上面导出全库备份！确定继续吗？', '初始化');
   if (!ok) return;
 
   /* 1) 业务数据：逐条打"删除墓碑"，而不是直接清表。
@@ -1302,7 +1314,7 @@ async function factoryReset() {
     if (!users[u].deleted) await softDelete('users', users[u].id);  // 其余打墓碑
   }
   var salt = uid('salt');                                        // 新的随机盐
-  var hash = await hashPassword('202306ZNKZXH.2026admin-lgj', salt);  // 默认密码的哈希
+  var hash = await hashPassword(DEFAULT_ADMIN_PWD, salt);        // 默认密码的哈希
   await DB.put('users', {                                        // 写回兜底管理员（重置为默认状态）
     id: 'user_bootstrap_admin', username: 'admin', passwordHash: hash, salt: salt,
     role: 'admin', active: true, createdAt: Date.now(), updatedAt: Date.now(), lastLogin: null
