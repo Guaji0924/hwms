@@ -60,9 +60,16 @@ function saveDb() {
 
 /* ==================== 3. 同步核心逻辑 ==================== */
 
+/* 账号上"只有管理员能改"的权限字段：这些字段不看整行 updatedAt，改看 permAt
+   （权限最后修改时间）。详见 functions/api/push.js 里的说明，两边规则必须一致，
+   否则用本地服务器调试时会出现"删掉的成员还能继续操作"的假象。 */
+var USER_PERM_FIELDS = ['deleted', 'active', 'role', 'passwordHash', 'salt',
+                        'canManage', 'pwdChanged', 'username', 'cls'];
+
 /* 处理推送：把客户端的变化合并进来（谁 updatedAt 新谁赢） */
 function handlePush(body) {
   var changes = (body && body.changes) || [];               // 取出变化列表
+  var force = !!(body && body.force);                       // force=true：允许恢复已删除账号（恢复备份时用）
   var accepted = 0;                                         // 接受了多少条
   for (var i = 0; i < changes.length; i++) {                // 逐条合并
     var ch = changes[i];                                    // 一条变化 { store, id, data }
@@ -72,7 +79,28 @@ function handlePush(body) {
     var old = db.stores[ch.store][ch.id];                   // 服务器上已有的同一条
     var newT = ch.data.updatedAt || ch.data.createdAt || 0;  // 新数据的改动时间
     var oldT = old ? (old.data.updatedAt || old.data.createdAt || 0) : -1;  // 旧数据的改动时间
-    if (newT >= oldT) {                                     // 新的 >= 旧的 → 采纳（含完全相同）
+
+    /* 铁律一：账号删除是终态，墓碑无条件采纳（各设备时钟有快慢，比时间戳会把删除丢掉） */
+    var isTombstone = (ch.store === 'users' && !!ch.data.deleted);
+    /* 铁律二：服务器上已是墓碑的账号，不允许被"还活着"的记录复活（兜底管理员除外） */
+    if (!force && ch.store === 'users' && !isTombstone &&
+        String(ch.id) !== 'user_bootstrap_admin' && old && old.data.deleted) {
+      continue;                                             // 拒绝复活
+    }
+    /* 权限字段单独比 permAt：上传方没带 permAt（只是刷新"最近使用时间"）→ 沿用服务器上的 */
+    if (!force && ch.store === 'users' && old && !isTombstone &&
+        String(ch.id) !== 'user_bootstrap_admin') {
+      var oldPerm = old.data.permAt || 0;                    // 服务器上的权限修改时间
+      var newPerm = ch.data.permAt || 0;                     // 上传方的权限修改时间
+      if (newPerm <= oldPerm) {                              // 上传方没有改权限
+        for (var pf = 0; pf < USER_PERM_FIELDS.length; pf++) {  // 权限字段还原成服务器上的值
+          ch.data[USER_PERM_FIELDS[pf]] = old.data[USER_PERM_FIELDS[pf]];
+        }
+        ch.data.permAt = old.data.permAt;                    // 权限时间也跟着还原
+      }
+    }
+
+    if (isTombstone || (force && ch.store === 'users') || newT >= oldT) {  // 采纳条件（含完全相同）
       db.stores[ch.store][ch.id] = { data: ch.data, rev: Date.now() };  // rev 用服务器时间
       accepted++;                                           // 计数
     }

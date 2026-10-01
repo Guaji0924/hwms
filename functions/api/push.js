@@ -32,7 +32,14 @@ export async function onRequest(context) {
 
   var changes = (body && body.changes) || [];                // 要合并的变化列表
   var accepted = 0;                                          // 实际采纳的条数
+  var force = !!(body && body.force);                        // force=true：允许"复活"已删除的账号（恢复备份时用）
   var now = Date.now();                                      // 本次请求统一用这个服务器时间当 rev
+
+  /* 账号上"只有管理员能改"的权限字段。
+     这些字段不看整行的 updatedAt，改看 permAt（权限最后修改时间），
+     原因见下面合并循环里的详细说明。 */
+  var USER_PERM_FIELDS = ['deleted', 'active', 'role', 'passwordHash', 'salt',
+                          'canManage', 'pwdChanged', 'username', 'cls'];
 
   /* 3. 一次性把服务器现有的行读出来，建立索引：key → { t, data }
      这样每条数据都不用再单独查一次数据库（原来最耗时的就是这一步）。 */
@@ -61,8 +68,55 @@ export async function onRequest(context) {
     var hit = existing[ch.store + '\u0000' + String(ch.id)];  // 服务器上已有的同一条（可能不存在）
     var oldT = hit ? hit.t : -1;                              // 没有旧数据就记 -1（表示"必收录"）
 
-    /* 新的 >= 旧的才采纳（含完全相同，用于补种） */
-    if (newT >= oldT) {
+    /* ---------- 账号（users 表）的两条铁律 ----------
+       这两条都刻意"不比时间戳"，因为各设备时钟有快慢（手机常比电脑快几十秒），
+       一旦按时间戳比大小，管理员的删除动作反而会被当成"过期消息"丢掉。 */
+
+    /* 铁律一：删除是终态，永远优先。
+       被删成员只要在自己设备上刷新一下页面，就会更新"最近使用时间"，
+       那条"还活着"的记录时间戳比墓碑还新 —— 按下面常规的时间戳规则，
+       墓碑会被判为过期而丢弃，账号永远删不掉，成员还能继续登记出入库。
+       所以只要这一条是墓碑，一律无条件采纳。 */
+    var incomingUserTombstone = (ch.store === 'users' && !!ch.data.deleted);
+
+    /* 铁律二：不允许"复活"。服务器上已经是墓碑的账号，任何设备都不能再用一条
+       "还活着"的记录覆盖回来（成员端刷新一次时间戳就会变成这样）。
+       两个例外：① 固定 id 的兜底管理员 —— 它是"防止系统失去所有管理员"的保险，
+       初始化时会重建，必须允许恢复；② force=true —— 只有管理员恢复备份 /
+       初始化全库快照时才带，此时本机快照就是权威，允许把账号恢复回来。 */
+    if (!force && ch.store === 'users' && !incomingUserTombstone &&
+        String(ch.id) !== 'user_bootstrap_admin' &&
+        hit && hit.data.deleted) {
+      continue;                                               // 拒绝复活：保持删除状态
+    }
+
+    /* ---------- 账号权限字段的单独保护 ----------
+       背景：成员端每次打开 / 刷新页面都会更新"最近使用时间"，整行的 updatedAt
+       因此被顶到最新，而它那条记录里的"启用状态 / 角色 / 密码"还是从服务器上
+       抄下来的旧值。如果这些权限字段也跟着比 updatedAt，管理员刚做完的
+       "停用 / 改角色 / 重置密码"就会被成员端的日常活动覆盖回去 ——
+       表现就是被停用的成员照样能登录、照样能登记出入库。
+       所以权限字段单独用 permAt（权限最后修改时间）判定：
+       · 上传方没带 permAt（只是刷新最近使用时间这类日常活动）→ 权限字段一律沿用服务器上的；
+       · 上传方带了 permAt → 谁的 permAt 新谁赢。
+       注意：删除墓碑在上面的"铁律一"里已经无条件采纳，不会被这里剥掉；
+       固定 id 的兜底管理员也不受本规则约束 —— 它是"防止系统失去所有管理员"的保险，
+       必须保证任何时候都能被恢复回来（否则被删掉就再也救不回来了）。 */
+    if (!force && ch.store === 'users' && hit && !incomingUserTombstone &&
+        String(ch.id) !== 'user_bootstrap_admin') {
+      var oldPerm = hit.data.permAt || 0;                      // 服务器上"权限最后一次被改"的时间
+      var newPerm = ch.data.permAt || 0;                       // 上传方"权限最后一次被改"的时间
+      if (newPerm <= oldPerm) {                                // 上传方没有改权限（或改得更早）
+        for (var pf = 0; pf < USER_PERM_FIELDS.length; pf++) {  // 逐个字段还原成服务器上的值
+          ch.data[USER_PERM_FIELDS[pf]] = hit.data[USER_PERM_FIELDS[pf]];
+        }
+        ch.data.permAt = hit.data.permAt;                      // 权限时间也跟着还原
+      }
+    }
+
+    /* 新的 >= 旧的才采纳（含完全相同，用于补种）；
+       墓碑、以及 force 模式下的账号，都不看时间戳，直接放行。 */
+    if (incomingUserTombstone || (force && ch.store === 'users') || newT >= oldT) {
       /* 有就更新、没有就插入（SQLite 的 UPSERT 写法） */
       stmts.push(env.DB.prepare(
         'INSERT INTO sync_rows (store, id, data, rev) VALUES (?, ?, ?, ?) ' +

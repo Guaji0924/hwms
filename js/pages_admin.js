@@ -146,7 +146,7 @@ async function repairUserSync() {
   var n = 0;                                                                                // 实际上传数量
   for (var i = 0; i < users.length; i++) {                                                   // 逐个账号
     if (users[i].deleted) continue;                                                           // 墓碑跳过
-    stampSync(users[i]);                                                                       // 盖上最新时间戳 → 这次上传一定赢过服务器上的旧记录
+    stampPerm(users[i]);                                                                       // 盖上最新时间戳（含权限时间）→ 这次上传一定赢过服务器上的旧记录
     await DB.put('users', users[i]);                                                            // 写回本机
     n++;                                                                                         // 计数
   }
@@ -192,7 +192,7 @@ async function addUserSubmit() {
     cls: cls,                                                                    // 班级（可为空）
     createdAt: Date.now(), lastLogin: null
   };
-  stampSync(newUser);                                                          // 盖同步时间戳（否则新成员账号不会同步到其他设备）
+  stampPerm(newUser);                                                          // 盖同步时间戳 + 权限时间（否则新成员账号不会同步到其他设备）
   await DB.put('users', newUser);                                              // 写库
   await Log.add('添加成员', name);                                             // 日志
   closeModal();                                                                 // 关弹窗
@@ -218,7 +218,7 @@ async function saveUserClass(userId) {
   if (!target) { toast('成员不存在', 'err'); return; }                          // 不存在提示
   var v = $('#uc-cls').value.trim();                                            // 新班级（可留空）
   target.cls = v;                                                               // 写入
-  stampSync(target);                                                            // 盖时间戳（同步到其他设备）
+  stampPerm(target);                                                            // 盖时间戳 + 权限时间（同步到其他设备）
   await DB.put('users', target);                                                // 保存
   await Log.add('修改班级', target.username + ' → ' + (v || '（已清空）'));      // 写日志
   closeModal();                                                                 // 关弹窗
@@ -233,7 +233,7 @@ async function toggleManage(userId) {
   for (var i = 0; i < users.length; i++) {                                             // 遍历
     if (users[i].id === userId) {                                                       // 命中
       users[i].canManage = !users[i].canManage;                                          // 翻转
-      stampSync(users[i]);                                                                // 盖同步时间戳（漏了它，这次改动就不会上传到其他设备）
+      stampPerm(users[i]);                                                                // 盖同步时间戳 + 权限时间（漏了它，这次改动就不会上传到其他设备）
       await DB.put('users', users[i]);                                                    // 写库
       await Log.add('修改权限', users[i].username + (users[i].canManage ? ' 获得管理权限' : ' 管理权限已收回'));  // 日志
       toast(users[i].username + (users[i].canManage ? ' 已获得物料管理权限' : ' 的管理权限已收回'), 'ok');  // 提示
@@ -262,7 +262,7 @@ async function toggleRole(userId) {
     if (!ok2) return;                                                                              // 取消
     target.role = 'admin';                                                                          // 升级
   }
-  stampSync(target);                                                                                  // 盖同步时间戳（漏了它，角色改动就不会同步到其他设备）
+  stampPerm(target);                                                                                  // 盖同步时间戳 + 权限时间（漏了它，角色改动就不会同步到其他设备）
   await DB.put('users', target);                                                                     // 写库
   await Log.add('修改角色', target.username + ' 角色改为' + (target.role === 'admin' ? '管理员' : '成员'));  // 日志
   toast('角色已更新', 'ok');                                                                          // 提示
@@ -281,7 +281,7 @@ async function toggleUserActive(userId) {
         if (admins <= 1) { toast('至少要保留一个启用的管理员', 'err'); return; }                     // 不许
       }
       users[i].active = !users[i].active;                                                           // 翻转状态
-      stampSync(users[i]);                                                                            // 盖同步时间戳（漏了它，启用/停用不会同步到其他设备）
+      stampPerm(users[i]);                                                                            // 盖同步时间戳 + 权限时间（漏了它，启用/停用不会同步到其他设备）
       await DB.put('users', users[i]);                                                               // 写库
       await Log.add(users[i].active ? '启用账号' : '停用账号', users[i].username);                     // 日志
       toast('已' + (users[i].active ? '启用' : '停用') + ' ' + users[i].username, 'ok');               // 提示
@@ -323,7 +323,8 @@ async function resetUserPwdSubmit(userId) {
     if (users[i].id === userId) {                                                              // 命中
       users[i].salt = uid('salt');                                                               // 换新盐
       users[i].passwordHash = await hashPassword(pwd, users[i].salt);                              // 新哈希
-      stampSync(users[i]);                                                                          // 盖同步时间戳（漏了它，重置后的密码不会同步到其他设备）
+      users[i].pwdChanged = false;                                                                  // 重置成初始密码 → 下次登录重新提示改密码
+      stampPerm(users[i]);                                                                          // 盖同步时间戳 + 权限时间（漏了它，重置后的密码不会同步到其他设备）
       await DB.put('users', users[i]);                                                             // 写库
       await Log.add('重置密码', users[i].username);                                                  // 日志
       closeModal();                                                                                  // 关
@@ -742,7 +743,7 @@ async function changeMyPwdSubmit() {
   u.salt = uid('salt');                                                         // 新盐
   u.passwordHash = await hashPassword(newPwd, u.salt);                            // 新哈希
   u.pwdChanged = true;                                                           // 已修改初始密码
-  stampSync(u);                                                                   // 盖同步时间戳（漏了它，自己改的密码不会同步到其他设备）
+  stampPerm(u);                                                                   // 盖同步时间戳 + 权限时间（漏了它，自己改的密码不会同步到其他设备）
   await DB.put('users', u);                                                       // 写库
   await Log.add('修改密码', u.username + ' 修改了自己的密码');                       // 日志
   closeModal();                                                                     // 关

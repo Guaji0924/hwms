@@ -196,8 +196,10 @@ var Sync = {
     return changes;                                             // 交给调用方上传
   },
 
-  /* ---------- 执行一轮完整同步：先推后拉 ---------- */
-  syncNow: async function () {
+  /* ---------- 执行一轮完整同步：先推后拉 ----------
+     force=true 时允许把"服务器上已标记删除的账号"恢复回来，只给"恢复备份"用；
+     平时一律不带，保证账号一旦被删就不会被任何设备复活。 */
+  syncNow: async function (force) {
     /* 已经有一轮同步在跑（比如 8 秒定时任务刚触发，或上一轮请求卡住）：
        不能返回 0 条冒充成功，否则"立即同步"按钮会谎报"同步完成：上传 0 条"。
        这里返回 busy 标记，让按钮提示用户稍等，真实错误才不会被掩盖 */
@@ -215,7 +217,7 @@ var Sync = {
         var pushRes = await fetchWithTimeout(this.state.url + '/api/push', {  // 推送接口（带 30 秒超时）
           method: 'POST',                                       // POST 方式
           headers: this.authHeaders(),                          // JSON 请求体
-          body: JSON.stringify({ device: this.state.device, changes: local })  // 数据
+          body: JSON.stringify({ device: this.state.device, force: !!force, changes: local })  // 数据（force 只在恢复备份时为 true）
         });
         if (pushRes.status === 401) throw new Error('服务器拒绝访问（401）：请确认"同步服务器地址"是否正确');  // 401 = 服务器不接受这台设备
         if (!pushRes.ok) throw new Error('上传失败，服务器返回 ' + pushRes.status);  // 其他服务器错误
@@ -227,12 +229,6 @@ var Sync = {
       if (!pullRes.ok) throw new Error('下载失败，服务器返回 ' + pullRes.status);  // 其他服务器错误
       var data = await pullRes.json();                          // { serverTime, changes, serverEmpty }
       var pulled = await this.applyServerChanges(data.changes || []);  // 应用到本机
-      /* 每轮同步都校验一次：当前登录的账号是不是还有效。
-         管理员刚把这个人删掉或停用了，他这台设备的内存里还留着旧的登录态，
-         不校验的话他还能继续出入库、照样登记 —— 这里发现失效就立刻踢下线。 */
-      if (!(await Auth.verifyStillValid())) {                    // 账号已被删除或停用
-        return { pushed: pushed, pulled: pulled, kicked: true };  // 结束本轮（页面马上会刷新回登录页）
-      }
       /* 服务器报"空库"（刚部署 / 免费云主机磁盘被重置）而本机有数据时，
          自动把本机全部数据重新上传一遍帮服务器恢复 —— 数据不会因为云主机重启而丢 */
       if (data.serverEmpty) {
@@ -247,8 +243,13 @@ var Sync = {
           pushed = seed.length;                                 // 上传条数按补种算
         }
       }
-      /* 第三步：记录本次同步到的位置（用服务器时间，避免各设备时钟不一致） */
-      this.state.lastSync = data.serverTime || Date.now();      // 更新水位
+      /* 第三步：记录本次同步到的位置（用服务器时间，避免各设备时钟不一致）。
+         刻意往回退 2 秒作为"安全重叠"：服务器是"先记截止时刻、再查数据"，理论上
+         不会漏，但万一有别的设备正好卡在这两步之间推了一条变化（比如"删除成员"
+         的墓碑），回退一点就能把它兜住。多拉回来的数据会按时间戳规则判为
+         "本机已是最新"而自动跳过，不会重复写入，也不会反复上传。 */
+      var watermark = data.serverTime || Date.now();            // 服务器给出的本次截止时刻
+      this.state.lastSync = Math.max(0, watermark - 2000);      // 回退 2 秒，防止边界漏数据
       this.state.lastError = '';                                // 成功：清空错误
       await this.persistState();                                // 把 lastSync 存进数据库
       if (pulled > 0) syncSafeRefresh();                        // 别人改了数据 → 智能刷新页面
@@ -267,6 +268,7 @@ var Sync = {
   applyServerChanges: async function (changes) {
     var applied = 0;                                            // 实际应用条数
     var matsChanged = false;                                    // 物料表有没有变动（循环结束统一刷缓存）
+    var kicked = false;                                         // 当前登录账号是不是被删掉/停用了（需要踢下线）
     for (var i = 0; i < changes.length; i++) {                  // 逐条处理
       var ch = changes[i];                                      // 一条远程变化
       if (ch.store === 'settings') {                            // 设置表：只认分类树
@@ -288,22 +290,59 @@ var Sync = {
       var remote = ch.data || {};                                 // 远程数据
       var rT = remote.updatedAt || remote.createdAt || 0;         // 远程改动时间
       var lT = local ? (local.updatedAt || local.createdAt || 0) : -1;  // 本地改动时间（没有算 -1，必收）
+      /* 账号的删除是"终态"：远端的删除墓碑一律生效，不参与时间戳比较。
+         原因：本机可能刚刷新过"最近使用时间"，时间戳会比墓碑更新；按下面那条
+         常规规则，墓碑会被当成"过期消息"丢掉，被删掉的成员就能继续操作下去。
+         注意这里只是把"墓碑生效"提前，不影响其他表的时间戳冲突规则。 */
+      if (ch.store === 'users' && remote.deleted) {               // 远端把这个账号删除了
+        await DB.del('users', ch.id);                             // 本机也删掉
+        if (typeof Auth !== 'undefined' && Auth.user && Auth.user.id === ch.id) kicked = true;  // 删的正是自己 → 标记踢下线
+        applied++;                                                // 计数
+        continue;                                                 // 处理下一条
+      }
       if (rT <= lT) continue;                                     // 本机已是最新的（含自己推出去的回声）→ 跳过
       if (remote.deleted) {                                       // 远程被打上了"删除墓碑"
         await DB.del(ch.store, ch.id);                            // 本机也真删
+        /* 被删掉的正好是"当前登录的这个账号"：标记一下，循环结束后立刻踢下线。
+           光删数据库是不够的 —— 内存里的登录信息还在，被删除的成员照样能
+           继续登记出入库，这是个权限漏洞，不能只靠"下次刷新页面"来兜底。 */
+        if (ch.store === 'users' && typeof Auth !== 'undefined' && Auth.user && Auth.user.id === ch.id) kicked = true;
       } else {                                                    // 正常数据
         if (ch.store === 'records') fixLegacyType(remote);        // 记录类数据顺手修正旧类型（out_use → out），防止旧类型从别的设备流回来
         await DB.put(ch.store, remote);                           // 直接覆盖本机（谁新谁赢）
         /* 同步下来的正好是"当前登录的这个账号"：内存里的登录资料也一起换新。
-           这样在别的设备把角色改成管理员后，本机不用退出重登就能立刻生效。 */
+           这样在别的设备把角色改成管理员后，本机不用退出重登就能立刻生效；
+           反过来被停用了，也要立刻踢下线。 */
         if (ch.store === 'users' && typeof Auth !== 'undefined' && Auth.user && Auth.user.id === ch.id) {
-          var roleChanged = (Auth.user.role !== remote.role);      // 角色有没有变化
-          Auth.user = remote;                                      // 更新内存中的登录用户
-          if (roleChanged && typeof renderShell === 'function') renderShell();  // 角色变了：重画侧边栏和顶栏
+          if (remote.active) {                                    // 账号还有效
+            var roleChanged = (Auth.user.role !== remote.role);    // 角色有没有变化
+            Auth.user = remote;                                    // 更新内存中的登录用户
+            if (roleChanged && typeof renderShell === 'function') renderShell();  // 角色变了：重画侧边栏和顶栏
+          } else {                                                // 账号被停用
+            kicked = true;                                        // 同样要踢下线
+          }
         }
       }
       if (ch.store === 'materials') matsChanged = true;           // 标记物料表变动
       applied++;                                                  // 计数
+    }
+    /* 兜底复核：不管这一轮有没有收到"自己这条账号"的变化，都重新确认一次
+       当前登录账号在本机是否还有效。
+       为什么不能只靠上面遍历里的判断：那里只有"本次变化里正好带着这条账号"时才触发；
+       如果墓碑是在更早的某一轮就已经被本机收下（比如当时还没登录、或者本机断网期间
+       另一台设备删的），内存里的登录状态就会一直留着 —— 被删成员照样能继续登记出入库。
+       这里每轮同步都强制查一遍，最多 8 秒就会把已失效的账号踢下线。 */
+    if (!kicked && typeof Auth !== 'undefined' && Auth.user) {
+      var selfRow = await DB.get('users', Auth.user.id);        // 重新读一遍自己的账号
+      if (!selfRow || selfRow.deleted || !selfRow.active) kicked = true;  // 已删除 / 已停用 → 踢下线
+    }
+    /* 当前登录的账号已经被管理员删除或停用：立刻清掉本机会话并回到登录页。
+       放在循环外面统一处理，避免在遍历过程中就把页面刷掉。 */
+    if (kicked) {                                                 // 需要踢下线
+      Auth.logout();                                              // 清内存 + localStorage + sessionStorage
+      if (typeof toast === 'function') toast('你的账号已被管理员删除或停用，已自动退出登录', 'err');  // 说明原因，别让人莫名其妙回到登录页
+      location.reload();                                          // 重新加载 → 回到登录页
+      return applied;                                             // 不再往下走
     }
     if (matsChanged && typeof State !== 'undefined' && State.refreshMaterials) {
       await State.refreshMaterials();                             // 物料缓存 + 搜索索引一次性重建
@@ -338,7 +377,12 @@ var Sync = {
     var res = await fetchWithTimeout(this.state.url + '/api/push', {  // 推送接口（带 30 秒超时）
       method: 'POST',
       headers: this.authHeaders(),
-      body: JSON.stringify({ device: this.state.device, full: true, changes: changes })
+      /* full=true：以本机为完整快照，让服务器清掉本机没有的残留行。
+         force=true：允许恢复"服务器上已标记删除的账号"。
+         这个操作只可能由管理员在"初始化全部数据 / 恢复备份"时触发（都已二次确认），
+         此时本机快照就是权威；不带 force 的话，备份里那些账号会被服务器当成
+         "复活"而拒收，恢复备份就等于白恢复。 */
+      body: JSON.stringify({ device: this.state.device, full: true, force: true, changes: changes })
     });
     if (!res.ok) throw new Error('服务器返回 ' + res.status);     // 服务器错误
     return await res.json();                                     // { ok, accepted, tombstoned }

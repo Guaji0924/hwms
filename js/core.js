@@ -174,6 +174,21 @@ function stampSync(obj) {
 }
 
 /**
+ * 给账号打上"权限最后修改时间"（permAt）
+ * 为什么账号要单独用这个戳：
+ * 成员端每次打开/刷新页面都会更新"最近使用时间"，那会把整行的 updatedAt 顶到最新。
+ * 如果权限（启用状态 / 角色 / 密码 / 删除标记）也跟着比 updatedAt，管理员刚做完的
+ * "停用 / 删除 / 改角色"就会被成员端那条"权限还是旧的、但时间戳更新"的记录覆盖回去 ——
+ * 表现就是被删除、被停用的成员照样能继续登录、继续登记出入库。
+ * 所以：凡是改动账号权限的地方（管理员增删改账号、成员自己改密码）都用本函数盖戳；
+ * 只刷新"最近使用时间"的地方（touchLogin / login）绝对不能用它。
+ */
+function stampPerm(obj) {
+  obj.permAt = Date.now();                                    // 记录"权限最后一次被改动"的时间
+  return stampSync(obj);                                      // 顺便盖整行时间戳（同步需要它）
+}
+
+/**
  * 软删除：不真正删除数据，只打上 deleted 标记（俗称"墓碑"）
  * 为什么要这样删？——多设备同步时，其他设备必须知道"这条数据被删了"，
  * 才能把本地的同一条也删掉。真删了就没痕迹可同步了。
@@ -182,6 +197,9 @@ async function softDelete(store, id) {
   var obj = await DB.get(store, id);                           // 先取出原数据
   if (!obj) return;                                            // 不存在就直接返回
   obj.deleted = true;                                          // 打上删除标记
+  /* 删除账号属于"权限改动"，要单独盖 permAt：
+     否则成员端那条"还活着、但时间戳更新"的记录会把删除覆盖回去，账号就删不掉了。 */
+  if (store === 'users') obj.permAt = Date.now();               // 账号：记录权限改动时间
   stampSync(obj);                                              // 记录删除发生的时间
   await DB.put(store, obj);                                    // 写回数据库
 }
@@ -506,30 +524,6 @@ var Auth = {
     this.user = null;                                          // 清空内存
     localStorage.removeItem('hwms_remember');                   // 清长期保存
     sessionStorage.removeItem('hwms_session');                  // 清会话保存
-  },
-
-  /* 校验当前登录的账号是否还有效（还存在、没被删除、没被停用）。
-     为什么需要：管理员删掉或停用某个账号后，被删的人自己那台设备上，
-     内存里的 Auth.user 还是登录时的旧对象，而权限判断（Auth.can）读的正是它 ——
-     所以他在同一次会话里还能继续出入库、照样登记。每次同步完都校验一遍，
-     一旦失效立刻把他踢下线。 */
-  verifyStillValid: async function () {
-    if (!this.user) return true;                               // 本来就没登录，不用管
-    if (this._kicking) return false;                           // 已经在踢了，别再重复触发
-    var fresh = await DB.get('users', this.user.id);            // 从本地库重新读一次最新状态
-    if (!fresh || fresh.deleted) { await this.kickOut('你的账号已被管理员删除，已自动退出登录'); return false; }  // 账号被删除
-    if (!fresh.active) { await this.kickOut('你的账号已被管理员停用，已自动退出登录'); return false; }            // 账号被停用
-    this.user = fresh;                                          // 账号有效：顺带同步最新资料（角色/班级的改动也能立刻生效）
-    return true;                                                // 校验通过
-  },
-
-  /* 强制下线：清掉会话、提示原因，然后回到登录页 */
-  kickOut: async function (reason) {
-    if (this._kicking) return;                                  // 只执行一次，避免同步定时器反复触发
-    this._kicking = true;                                       // 上锁
-    this.logout();                                              // 清掉登录态和本地会话
-    if (typeof toast === 'function') toast(reason, 'err');        // 告诉用户为什么被踢出来
-    setTimeout(function () { location.reload(); }, 1800);        // 留 1.8 秒让他看清提示，再刷新回登录页
   },
 
   /**

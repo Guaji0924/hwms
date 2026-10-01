@@ -1153,7 +1153,12 @@ async function importFullBackup(input) {
       }
       await DB.bulkPut('materials', stampRestored(data.materials));                                            // 写回物料
       await DB.bulkPut('records', stampRestored(data.records));                                                // 写回记录
-      await DB.bulkPut('users', stampRestored(data.users));                                                    // 写回账号
+      /* 账号要额外盖 permAt（权限修改时间）：服务器对"启用状态/角色/密码"这些权限字段
+         是按 permAt 判新旧的，只盖 updatedAt 会被当成"这次没改权限"，服务器上旧的权限
+         就会被保留下来，恢复备份等于没恢复。 */
+      var restoredUsers = stampRestored(data.users);                                                           // 写回账号（先盖通用时间戳）
+      for (var ru = 0; ru < restoredUsers.length; ru++) restoredUsers[ru].permAt = now;                          // 再盖权限时间
+      await DB.bulkPut('users', restoredUsers);                                                                 // 写入账号表
       await DB.bulkPut('logs', stampRestored(data.logs));                                                      // 写回日志
 
       /* 3) 设置表：恢复备份内容，但要保住同步进度（syncConfig 里的 lastSync），
