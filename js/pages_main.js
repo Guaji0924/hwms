@@ -815,6 +815,33 @@ async function saveMaterialForm(e, id) {
   m.updatedAt = Date.now();                                          // 更新时间
   delete m._search;                                                  // 清掉内存索引再入库
   await DB.put('materials', m);                                      // 写库
+  /* 新增物料：把"初始库存"同时写成一条「库存调整」流水，当作对账的期初锚点。
+     为什么必须写：库存对账是靠 records 流水反推出来的（期初值 + 之后每笔增减），
+     没有这条起点记录就算不出真实库存，物料会一直挂在"缺少期初锚点"清单里。
+     老物料当年只把初始库存写进了 stock 字段、没留流水，只能靠
+     Reconcile.seedAnchors() 事后补种；从现在起新建的物料自带锚点，天生可对账。
+     记录 id 固定为 'anchor-物料id'：多台设备各自建一次也只会是同一条，不会重复。 */
+  if (!id) {
+    var anchorTs = Date.now();                                       // 同一个时间戳，before/after 才对得上
+    await DB.put('records', {
+      id: 'anchor-' + m.id,                                          // 固定编号（多端不会重复补）
+      materialId: m.id,                                              // 所属物料
+      materialName: m.name,                                          // 冗余物料名（物料删除后仍可查）
+      unit: m.unit || '',                                            // 单位
+      type: 'adjust',                                                // 类型：库存调整（绝对赋值，正好当起点）
+      qty: m.stock || 0,                                             // 期初数量
+      price: 0,                                                      // 不涉及金额
+      operator: Auth.user ? Auth.user.username : '未知',              // 建档人
+      project: '',                                                   // 不关联项目
+      remark: '期初库存：建档时的初始数量（对账起点）',                 // 备注
+      before: 0,                                                     // 起点之前视为 0
+      after: m.stock || 0,                                           // 起点值 = 初始库存
+      seeded: true,                                                  // 标记：这是期初锚点
+      time: anchorTs,                                                // 时间
+      createdAt: anchorTs,                                           // 创建时间（多设备同步用）
+      updatedAt: anchorTs                                            // 修改时间（多设备同步用）
+    });
+  }
   await Log.add(id ? '编辑物料' : '新增物料', name + '（' + m.code + '）');  // 日志
   await State.refreshMaterials();                                    // 刷新缓存与索引
   closeModal();                                                      // 关弹窗

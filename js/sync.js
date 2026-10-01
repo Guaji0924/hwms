@@ -347,6 +347,21 @@ var Sync = {
     if (matsChanged && typeof State !== 'undefined' && State.refreshMaterials) {
       await State.refreshMaterials();                             // 物料缓存 + 搜索索引一次性重建
     }
+    /* 同步完顺手做一次库存对账 —— 这一步是"离线库存冲突"的兜底。
+       为什么放在这里：冲突只可能是"合并了别的设备的数据"之后才出现的，所以
+       每次拉完就查一遍最合适。它会拿 records 流水反推库存，和 stock 字段比，
+       对不上的就亮顶栏角标；其中"算出来是负数"（离线超卖）的，如果肇事出库
+       记录正好是当前登录的人开的，就弹窗请他填实际出库数。
+       Reconcile.run() 内部有 60 秒节流，8 秒一轮的同步不会把它跑成负担；
+       对账本身出错也不该连累同步，所以整段包 try/catch。 */
+    if (typeof Reconcile !== 'undefined') {
+      try {
+        await Reconcile.run();                                  // 对账（内部节流 + 自己刷新角标）
+        if (typeof maybeAutoPromptOversell === 'function') await maybeAutoPromptOversell();  // 超卖且是自己开的单 → 弹窗
+      } catch (e) {
+        console.warn('[库存对账] 执行失败（不影响同步本身）：', e);  // 只记日志，不往外抛
+      }
+    }
     return applied;                                               // 返回应用条数
   },
 

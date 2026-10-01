@@ -393,6 +393,11 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; } /* 表�
 .tbl td {                                                        /* 单元格 */
   padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: middle;
 }
+.cls-cell {                                                      /* 用户管理「班级」列：双击 / 长按就地编辑 */
+  -webkit-touch-callout: none;                                   /* 手机上长按不弹"拷贝/查询"气泡，免得盖住输入框 */
+  -webkit-user-select: none; user-select: none;                  /* 长按过程中不选中文字 */
+}
+.cls-cell input { -webkit-user-select: text; user-select: text; }  /* 但输入框里的字要能正常选中编辑 */
 .tbl tbody tr:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); } /* 行悬停：主色微染，与表头区分 */
 .t-link { color: var(--primary); cursor: pointer; font-weight: 600; }     /* 所有可点击名称（表格内外统一主题色+手型） */
 .tbl .t-link { color: var(--primary); cursor: pointer; font-weight: 600; } /* 可点击的名称 */

@@ -157,6 +157,11 @@ async function doLogin() {
     location.hash = '#/dashboard';                                              // 改 hash 会自动触发路由
   }
   toast('欢迎回来，' + Auth.user.username + '！', 'ok');                            // 欢迎
+  /* 登录后先对一次账：不用等下一轮同步，顶栏角标就能立刻反映"库存和流水对不上"。
+     这里只算、只亮角标，不弹窗打扰 —— 弹窗留给"同步时真的发现了超卖"那个时机。 */
+  if (typeof Reconcile !== 'undefined') {
+    Reconcile.run(true).catch(function () {});                                       // 对账失败不影响登录
+  }
   await maybeShowWelcome();                                                       // 首次运行欢迎弹窗
   /* 新注册成员第一次登录：弹窗引导去看「使用手册」（管理员走上面的欢迎引导，不重复打扰） */
   if (isFirstLogin && Auth.user && Auth.user.role !== 'admin') {
@@ -213,11 +218,15 @@ function renderShell() {
     }
   }
   /* 侧栏底部用户卡片：头像 + 姓名 + 一排带文字的小按钮（退出登录一眼可见） */
+  /* 档位口径和菜单过滤保持一致：预览成员视角时按成员显示，别把管理员身份露出来 */
+  var tier = isAdmin ? userRoleTier(u) : (u.canManage ? 'manager' : 'member');            // member / manager / admin
   var userCard = '' +
     '<div class="sidebar-user">' +
       '<div class="su-top">' +
-        '<span class="user-avatar">' + escapeHtml(u.username.charAt(0).toUpperCase()) + '</span>' +
-        '<span class="user-meta"><span class="u-name">' + escapeHtml(u.username) + '</span><span class="u-role">' + (isAdmin ? '管理员' : (u.canManage ? '成员 · 已授权' : '成员')) + '</span></span>' +
+        /* 头像底色和角色小字都按档位上色：成员蓝、成员+物料管理紫、管理员红
+           （小字用更亮的 TEXT 那组，深色侧栏上才看得清） */
+        '<span class="user-avatar" style="background:' + ROLE_TIER_AVATAR[tier] + '">' + escapeHtml(u.username.charAt(0).toUpperCase()) + '</span>' +
+        '<span class="user-meta"><span class="u-name">' + escapeHtml(u.username) + '</span><span class="u-role" style="color:' + ROLE_TIER_TEXT[tier] + '">' + ROLE_TIER_LABEL[tier] + '</span></span>' +
       '</div>' +
         '<span class="su-actions">' +
           '<button class="su-btn" title="修改我的密码" onclick="changeMyPwdModal()">' + ICONS.settings + '<span>修改密码</span></button>' +
@@ -248,6 +257,9 @@ function renderShell() {
           '<div class="tb-right">' +
             '<span id="net-state" class="net-state" title="网络状态"></span>' +
             '<button class="icon-btn bell-wrap" title="库存预警" onclick="gotoPage(\'alerts\')">' + ICONS.bell + '<span class="bell-badge" id="bell-badge" style="display:none">0</span></button>' +
+            /* 库存对账入口：只在"库存字段和出入库流水对不上"时才显示（默认 display:none）。
+               点开就是对账清单：能一键以流水为准，超卖的还能填实际出库数修正。 */
+            '<button class="icon-btn bell-wrap" id="rec-btn" style="display:none" title="库存对账" onclick="Reconcile.openModal()">' + ICONS.history + '<span class="bell-badge" id="rec-badge" style="display:none">0</span></button>' +
             '<button class="icon-btn" id="theme-toggle-btn" title="切换主题" onclick="setTheme(\'' + (document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark') + '\')">' + (document.documentElement.getAttribute('data-theme') === 'dark' ? ICONS.sun : ICONS.moon) + '</button>' +
           '</div>' +
         '</header>' +
@@ -274,6 +286,7 @@ function renderShell() {
     hpEl.addEventListener('click', function (e) { if (e.target.closest('.nav-item')) hpEl.classList.remove('show'); }); /* 点菜单后收起面板 */
   }
   updateBell();                                                                              // 更新预警角标
+  if (typeof updateReconcileBadge === 'function') updateReconcileBadge();                     // 更新库存对账角标（reconcile.js 加载后生效）
   if (typeof updateNetState === 'function') updateNetState();                                 // 更新网络状态指示（sync.js 加载后生效）
 }
 

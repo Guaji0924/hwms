@@ -62,7 +62,7 @@ function pageManual() {
           '<tr><td><b>历史追溯</b></td><td>每一笔出入库都可查，可按关键词 / 类型 / 项目 / 状态 / 时间筛选、可导出；录错了自己的记录可以撤回，撤回后还能取消撤回</td></tr>' +
           '<tr><td><b>数据管理</b></td><td>回收站（自己删的能恢复）、操作日志' + (canMng ? '；物料 CSV 导入导出' + am : '') + (isAdmin ? '；全库备份恢复、彻底删除、示例数据、初始化' + ao : '') + '</td></tr>' +
           (isAdmin
-            ? '<tr><td><b>用户管理</b><span class="badge badge-purple">管理员</span></td><td>添加成员、改班级、授权、升降管理员、停用启用、重置密码' + ao + '</td></tr>'
+            ? '<tr><td><b>用户管理</b><span class="badge badge-purple">管理员</span></td><td>添加成员、改角色（下拉框三档）、双击班级就地修改、停用启用、重置密码' + ao + '</td></tr>'
             : '') +
           '<tr><td><b>系统设置</b></td><td>多端同步、AI 接入、界面主题' + (isAdmin ? '；分类管理' + ao : '') + '</td></tr>' +
         '</tbody>' +
@@ -106,7 +106,7 @@ function pageManual() {
               '<tr><td>分类管理 ' + ao + '</td><td>❌</td><td>❌</td><td>✅</td></tr>' +
             '</tbody>' +
           '</table></div>' +
-          '<div class="form-hint" style="margin-top:10px">可在「用户管理」里给某个成员临时勾选管理权限（"已授权 / 未授权"按钮），让他帮忙录入物料档案。</div>' +
+          '<div class="form-hint" style="margin-top:10px">想在「用户管理」里让人帮忙录入物料档案？把那个成员的角色下拉框选成<b>「成员 + 物料管理」</b>即可（改完随时能选回「成员」）。班级列<b>双击</b>就能直接改。</div>' +
         '</div>'
       : '') +
 

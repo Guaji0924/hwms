@@ -14,6 +14,25 @@ var DEFAULT_INIT_PWD = 'zknb';   /* 新成员初始密码 / 重置密码统一�
 /* 用户列表的筛选状态：q=关键词（搜姓名或班级），cls=选定的班级 */
 var UserFilter = { q: '', cls: '' };
 
+/* 角色三档的中文名：下拉框、徽章、日志、提示共用，避免到处写死字符串。
+   member = 普通成员；manager = 成员 + 物料管理（role 仍是 member，靠 canManage 放行）；admin = 管理员。 */
+var ROLE_TIER_LABEL = { member: '成员', manager: '成员 + 物料管理', admin: '管理员' };
+
+/* 角色三档的配色：普通成员蓝 / 授权成员紫 / 管理员红。
+   AVATAR 是头像底色 —— 浅色页面和深色侧边栏上都得看得清，所以用饱和色配白字；
+   TEXT 是侧边栏那行角色小字专用的亮色 —— 深色底上直接用深红深蓝会糊成一团；
+   BADGE 是表格里角色徽章的样式类（见 style.css 的 .badge-*）。 */
+var ROLE_TIER_AVATAR = { member: '#0284c7', manager: '#7c3aed', admin: '#dc2626' };
+var ROLE_TIER_TEXT   = { member: '#60a5fa', manager: '#a78bfa', admin: '#f87171' };
+var ROLE_TIER_BADGE  = { member: 'badge-blue', manager: 'badge-purple', admin: 'badge-red' };
+
+/* 从用户对象算出他属于哪一档：member / manager / admin。
+   列表页、侧边栏用户卡都靠它，避免两边各写一套判断走偏。 */
+function userRoleTier(u) {
+  if (!u) return 'member';                                        // 兜底
+  return u.role === 'admin' ? 'admin' : (u.canManage ? 'manager' : 'member');
+}
+
 async function pageUsers() {
   if (!Auth.user || !isAdminNow()) {                                     // 权限检查（管理员"成员视角预览"时同样看不到）
     $('#page').innerHTML = '<div class="empty"><div class="e-ico">' + ICONS.lock + '</div>此页面仅管理员可见</div>';
@@ -44,26 +63,28 @@ async function pageUsers() {
   for (var i = 0; i < shown.length; i++) {                                // 遍历
     var u = shown[i];                                                     // 当前用户
     var isSelf = u.id === Auth.user.id;                                    // 是不是自己
-    var roleHtml = u.role === 'admin'
-      ? '<span class="badge badge-purple">管理员</span>'                   // 管理员
-      : '<span class="badge badge-blue">成员</span>';                      // 普通成员
-    var manageHtml = u.role === 'admin'
-      ? '<span style="color:var(--text-sub);font-size:12px">拥有全部权限</span>'  // 管理员不用开关
-      : '<button class="btn btn-sm ' + (u.canManage ? 'btn-primary' : 'btn-outline') + '" onclick="toggleManage(\'' + u.id + '\')">' + (u.canManage ? '已授权' : '未授权') + '</button>';  // 临时管理权限开关
+    /* 角色下拉框：把"角色"和"临时管理权限"两件事合并成一个三档选择。
+         member  → 成员：查询 / 出入库 / 智能配料 / 导出
+         manager → 成员 + 物料管理：额外可编辑物料档案、导入
+         admin   → 管理员：全部权限（物料 / 用户 / 设置 / 数据）
+       原来的"临时管理权限"列、"设为管理员 / 降为成员"按钮都由它取代。 */
+    var tier = userRoleTier(u);                                             // 当前档位：member / manager / admin
+    var roleCell = isSelf
+      ? '<span class="badge ' + ROLE_TIER_BADGE[tier] + '">' + ROLE_TIER_LABEL[tier] + '</span>'  // 自己：只显示不给改，防止把自己降级后没人能管用户
+      : '<select class="select" style="width:auto;min-width:136px;padding:4px 8px;font-size:12.5px" onchange="setUserRoleTier(\'' + u.id + '\', this.value)" title="修改角色">' +
+          '<option value="member"' + (tier === 'member' ? ' selected' : '') + '>成员</option>' +
+          '<option value="manager"' + (tier === 'manager' ? ' selected' : '') + '>成员 + 物料管理</option>' +
+          '<option value="admin"' + (tier === 'admin' ? ' selected' : '') + '>管理员</option>' +
+        '</select>';
     rows += '<tr' + (isSelf ? ' style="background:var(--primary-light)"' : '') + '>' +  // 自己高亮
-      '<td><div style="display:flex;align-items:center;gap:10px"><span class="user-avatar" style="width:30px;height:30px;font-size:13px;background:' + (u.role === 'admin' ? '#7c3aed' : 'var(--primary)') + '">' + escapeHtml(u.username.charAt(0).toUpperCase()) + '</span><b>' + escapeHtml(u.username) + (isSelf ? ' <span style="font-size:11px;color:var(--text-sub)">（我）</span>' : '') + '</b></div></td>' +
-      '<td style="font-size:12.5px">' + (u.cls ? escapeHtml(u.cls) : '<span style="color:var(--text-sub)">未填</span>') + '</td>' +  // 班级列
-      '<td>' + roleHtml + '</td>' +
-      '<td>' + manageHtml + '</td>' +
+      '<td><div style="display:flex;align-items:center;gap:10px"><span class="user-avatar" style="width:30px;height:30px;font-size:13px;background:' + ROLE_TIER_AVATAR[tier] + '">' + escapeHtml(u.username.charAt(0).toUpperCase()) + '</span><b>' + escapeHtml(u.username) + (isSelf ? ' <span style="font-size:11px;color:var(--text-sub)">（我）</span>' : '') + '</b></div></td>' +
+      /* 班级列：双击（或手机上长按）就地编辑，替代原来的"改班级"按钮 */
+      '<td class="cls-cell" data-uid="' + escapeHtml(u.id) + '" data-cls="' + escapeHtml(u.cls || '') + '" ondblclick="startEditClass(this)" title="双击（手机长按）修改班级" style="font-size:12.5px;cursor:text">' + clsCellHtml(u.cls) + '</td>' +
+      '<td>' + roleCell + '</td>' +
       '<td style="font-size:12.5px">' + (u.lastLogin ? fmtDate(u.lastLogin) : '从未使用') + '</td>' +
-      '<td>' + (u.active ? '<span class="badge badge-green">正常</span>' : '<span class="badge badge-red">已停用</span>') + '</td>' +
+      '<td>' + (u.active ? '<span class="badge badge-green">正常</span>' : '<span class="badge badge-gray">已停用</span>') + '</td>' +
       '<td style="white-space:nowrap">' +
-        '<button class="btn btn-sm btn-outline" onclick="editUserClass(\'' + u.id + '\')">改班级</button> ' +  // 新增：随时改班级
         '<button class="btn btn-sm btn-outline" onclick="resetUserPwd(\'' + u.id + '\')">重置密码</button> ' +
-        (u.role === 'member' && u.active
-          ? '<button class="btn btn-sm btn-outline" onclick="toggleRole(\'' + u.id + '\')">设为管理员</button> ' : '') +
-        (u.role === 'admin' && !isSelf
-          ? '<button class="btn btn-sm btn-outline" onclick="toggleRole(\'' + u.id + '\')">降为成员</button> ' : '') +
         (!isSelf ? (u.active
           ? '<button class="btn btn-sm btn-outline" onclick="toggleUserActive(\'' + u.id + '\')">停用</button> '
           : '<button class="btn btn-sm btn-outline" onclick="toggleUserActive(\'' + u.id + '\')">启用</button> ') +
@@ -73,7 +94,7 @@ async function pageUsers() {
   }
   $('#page').innerHTML =
     '<div class="page-head">' +
-      '<div><div class="page-title">用户管理</div><div class="page-desc">管理员可以添加成员、临时授予物料管理权限</div></div>' +
+      '<div><div class="page-title">用户管理</div><div class="page-desc">添加成员、改角色（下拉框）、双击班级就地修改</div></div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
         /* 修复按钮：早期版本的改角色/改权限没盖同步时间戳，改动只留在本机没上传，
            手机上登同一账号还是旧角色。点它可"以本机为准"重新上传全部账号。 */
@@ -85,8 +106,8 @@ async function pageUsers() {
     '<div class="card" style="padding:14px 18px">' +
       '<div style="display:flex;gap:26px;flex-wrap:wrap;font-size:12.5px">' +
         '<div><span class="badge badge-purple">管理员</span> 全部权限：管理物料 / 用户 / 设置 / 数据</div>' +
+        '<div><span class="badge badge-green">成员 + 物料管理</span> 额外可编辑物料档案与导入</div>' +
         '<div><span class="badge badge-blue">成员</span> 可查询、出入库、智能配料、导出</div>' +
-        '<div><span class="badge badge-green">成员+已授权</span> 额外可编辑物料档案与导入</div>' +
       '</div>' +
     '</div>' +
     '<div class="card">' +
@@ -99,12 +120,17 @@ async function pageUsers() {
         ((UserFilter.q || UserFilter.cls) ? '<button class="btn btn-sm btn-outline" onclick="UserFilter.q=\'\';UserFilter.cls=\'\';pageUsers()">清除筛选</button>' : '') +
       '</div>' +
       '<div class="table-wrap"><table class="tbl">' +
-        '<thead><tr><th>用户</th><th>班级</th><th>角色</th><th>临时管理权限</th><th>最近使用</th><th>状态</th><th>操作</th></tr></thead>' +
+        '<thead><tr><th>用户</th><th>班级<span style="font-weight:400;color:var(--text-sub)">（双击/长按改）</span></th><th>角色</th><th>最近使用</th><th>状态</th><th>操作</th></tr></thead>' +
         '<tbody>' + (shown.length === 0
-          ? '<tr><td colspan="7"><div class="empty">没有找到匹配的成员，换个关键词试试</div></td></tr>'  // 筛选后为空的提示（共 7 列）
+          ? '<tr><td colspan="6"><div class="empty">没有找到匹配的成员，换个关键词试试</div></td></tr>'  // 筛选后为空的提示（共 6 列）
           : rows) + '</tbody>' +
       '</table></div>' +
     '</div>';
+
+  /* 手机兜底：双击在很多移动浏览器里会被当成"双击缩放"，不一定触发 dblclick，
+     所以给每个班级单元格再绑一个长按（按住 500ms 也能进编辑）。桌面端双击照旧可用。 */
+  var clsCells = $('#page').querySelectorAll('.cls-cell');                          // 本页所有班级单元格
+  for (var c3 = 0; c3 < clsCells.length; c3++) { bindLongPressClass(clsCells[c3]); }  // 逐个绑定长按
 }
 
 /* 修复账号同步：把本机当前的账号信息（角色 / 密码 / 班级 / 启用状态）重新盖上
@@ -169,7 +195,7 @@ function addUserModal() {
     '<div class="form-item"><label>用户名 <span class="req">*</span></label><input class="input" id="au-name" maxlength="20" placeholder="建议用真实姓名或学号" /></div>' +
     '<div class="form-hint">初始密码统一为 <b>zknb</b>，成员首次登录后请自行修改，无需管理员设置</div>' +
     '<div class="form-item"><label>班级（选填）</label><input class="input" id="au-class" maxlength="30" placeholder="例如：电气2401" /></div>' +
-    '<div class="form-hint">新成员默认为普通成员（可查询/出入库/导出），需要更多权限再点"临时管理权限"授权</div>',
+    '<div class="form-hint">新成员默认是「成员」（可查询 / 出入库 / 导出）。建好后在列表里用<b>角色下拉框</b>改成「成员 + 物料管理」或「管理员」。</div>',
     '<button class="btn" onclick="closeModal()">取消</button>' +
     '<button class="btn btn-primary" onclick="addUserSubmit()">创建</button>');
 }
@@ -200,73 +226,109 @@ async function addUserSubmit() {
   pageUsers();                                                                   // 刷新
 }
 
-/* 修改成员班级（管理员点击"改班级"按钮弹出） */
-async function editUserClass(userId) {
-  if (!isAdminNow()) { toast('只有管理员可以修改班级', 'err'); return; }       // 权限检查
-  var target = await DB.get('users', userId);                                  // 找到目标成员
-  if (!target) { toast('成员不存在', 'err'); return; }                          // 不存在提示
-  openModal('修改班级 · ' + target.username, '' +                                // 弹窗标题带成员名
-    '<div class="form-item"><label>班级</label><input class="input" id="uc-cls" maxlength="30" value="' + escapeHtml(target.cls || '') + '" placeholder="例如：电气2401，留空表示未填" /></div>',
-    '<button class="btn" onclick="closeModal()">取消</button>' +
-    '<button class="btn btn-primary" onclick="saveUserClass(\'' + userId + '\')">保存</button>');
-  setTimeout(function () { var el = $('#uc-cls'); if (el) el.focus(); }, 60);     // 弹窗渲染后自动聚焦
+/* ==================== 班级就地编辑 ==================== */
+
+/* 班级单元格的显示内容：空值给个灰色占位 */
+function clsCellHtml(cls) {
+  return cls ? escapeHtml(cls) : '<span style="color:var(--text-sub)">未填</span>';
 }
 
-/* 保存班级修改 */
-async function saveUserClass(userId) {
+/* 双击（或手机上长按）班级单元格 → 就地变成输入框（回车保存、Esc 取消、点到别处也保存）
+   取代了原来的"改班级"按钮 —— 少一个按钮，改班级就在原地改。
+   要改的是谁从单元格的 data-uid 上读，这样双击和长按两条路能共用同一个入口。 */
+function startEditClass(td) {
+  if (!isAdminNow()) { toast('只有管理员可以修改班级', 'err'); return; }        // 权限检查
+  if (td.querySelector('input')) return;                                       // 已经在编辑了，别套娃
+  var userId = td.getAttribute('data-uid') || '';                              // 要改的成员 id
+  if (!userId) return;                                                         // 读不到就放弃
+  var old = td.getAttribute('data-cls') || '';                                 // 原班级（取消时恢复用）
+  td.innerHTML = '<input class="input" style="width:100%;min-width:110px;padding:4px 8px;font-size:12.5px" maxlength="30" value="' + escapeHtml(old) + '" />';
+  var inp = td.querySelector('input');                                         // 刚插入的输入框
+  var cancelled = false;                                                       // 标记：是不是按了 Esc
+  inp.focus();                                                                 // 自动聚焦
+  inp.select();                                                                // 全选，方便直接重打
+  inp.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { inp.blur(); }                                     // 回车 = 保存（blur 会触发下面的保存）
+    else if (e.key === 'Escape') { cancelled = true; inp.blur(); }             // Esc = 取消
+  });
+  inp.addEventListener('blur', function () {
+    if (cancelled) { td.innerHTML = clsCellHtml(old); return; }                // 取消：恢复原样，不写库
+    saveUserClassInline(userId, inp.value, td, old);                           // 保存（异步）
+  });
+}
+
+/* 给班级单元格补一个"长按 500ms 也能改"的手势。
+   为什么需要：手机上双击常被浏览器当成"双击缩放"，dblclick 不一定触发；
+   长按更稳，而且不会跟滚动、单击打架 —— 手指一滑就取消。桌面端双击照旧可用。 */
+function bindLongPressClass(td) {
+  var timer = null;                                                                // 长按计时器
+  var cancel = function () { if (timer) { clearTimeout(timer); timer = null; } };   // 作废这次长按
+  td.addEventListener('touchstart', function () {                                  // 手指按下
+    cancel();                                                                      // 先清掉上一轮的计时
+    timer = setTimeout(function () { timer = null; startEditClass(td); }, 500);      // 按住 500ms → 进编辑
+  }, { passive: true });                                                           // passive：不干扰页面滚动
+  td.addEventListener('touchend', cancel);                                         // 抬手：没满 500ms 就作废
+  td.addEventListener('touchmove', cancel);                                        // 滑动（其实想滚列表）：作废
+  td.addEventListener('touchcancel', cancel);                                      // 被系统打断：作废
+}
+
+/* 保存就地编辑的班级（写的是和原来弹窗版同一个字段，只是不再弹窗） */
+async function saveUserClassInline(userId, value, td, old) {
   var target = await DB.get('users', userId);                                  // 目标成员
-  if (!target) { toast('成员不存在', 'err'); return; }                          // 不存在提示
-  var v = $('#uc-cls').value.trim();                                            // 新班级（可留空）
-  target.cls = v;                                                               // 写入
-  stampPerm(target);                                                            // 盖时间戳 + 权限时间（同步到其他设备）
-  await DB.put('users', target);                                                // 保存
+  if (!target) { td.innerHTML = clsCellHtml(old); return; }                    // 找不到人：恢复显示就好
+  var v = String(value || '').trim();                                          // 新班级（允许留空）
+  if (v === (old || '')) { td.innerHTML = clsCellHtml(old); return; }          // 没改动：不写库、不写日志
+  target.cls = v;                                                              // 写入新班级
+  stampPerm(target);                                                           // 盖同步时间戳 + 权限时间（漏了它，改动不会上传到其他设备）
+  await DB.put('users', target);                                               // 保存
   await Log.add('修改班级', target.username + ' → ' + (v || '（已清空）'));      // 写日志
-  closeModal();                                                                 // 关弹窗
-  toast('班级已更新', 'ok');                                                     // 提示
-  pageUsers();                                                                  // 刷新列表
+  toast('已把 ' + target.username + ' 的班级改为 ' + (v || '（未填）'), 'ok');   // 提示
+  pageUsers();                                                                 // 重画整表（顺带把 data-cls 刷成新值）
 }
 
-/* 切换临时管理权限 */
-async function toggleManage(userId) {
-  if (!Auth.user || Auth.user.role !== 'admin') { toast('没有权限', 'err'); return; }  // 权限
-  var users = await DB.all('users');                                                  // 全部
-  for (var i = 0; i < users.length; i++) {                                             // 遍历
-    if (users[i].id === userId) {                                                       // 命中
-      users[i].canManage = !users[i].canManage;                                          // 翻转
-      stampPerm(users[i]);                                                                // 盖同步时间戳 + 权限时间（漏了它，这次改动就不会上传到其他设备）
-      await DB.put('users', users[i]);                                                    // 写库
-      await Log.add('修改权限', users[i].username + (users[i].canManage ? ' 获得管理权限' : ' 管理权限已收回'));  // 日志
-      toast(users[i].username + (users[i].canManage ? ' 已获得物料管理权限' : ' 的管理权限已收回'), 'ok');  // 提示
-      pageUsers();                                                                          // 刷新
-      return;                                                                                 // 结束
-    }
-  }
-}
+/* ==================== 角色三档切换 ==================== */
 
-/* 角色切换（成员<->管理员） */
-async function toggleRole(userId) {
-  if (!Auth.user || Auth.user.role !== 'admin') { toast('没有权限', 'err'); return; }    // 权限
-  var users = await DB.all('users');                                                        // 全部
-  var target = null;                                                                         // 目标
+/* 角色下拉框改档位：member（成员）/ manager（成员 + 物料管理）/ admin（管理员）。
+   取代了原来的"临时管理权限"开关和"设为管理员 / 降为成员"按钮 —— 三档一个下拉框搞定。
+   注意 manager 这档的 role 仍然是 member，只是 canManage = true，
+   因为 Auth.can('manage') 认的就是 canManage（见 core.js）。 */
+async function setUserRoleTier(userId, tier) {
+  if (!Auth.user || Auth.user.role !== 'admin') { toast('没有权限', 'err'); pageUsers(); return; }  // 权限
+  if (userId === Auth.user.id) { toast('不能修改自己的角色，请让另一位管理员来改', 'err'); pageUsers(); return; }  // 防自锁：把自己降级就没人能管用户了
+  var users = await DB.all('users');                                              // 全部账号
+  var target = null;                                                              // 目标账号
   for (var i = 0; i < users.length; i++) { if (users[i].id === userId) { target = users[i]; break; } }  // 查找
-  if (!target) return;                                                                        // 没有
-  if (target.role === 'admin') {                                                               // 管理员降为成员
-    var admins = 0;                                                                             // 管理员计数
-    for (var a = 0; a < users.length; a++) { if (users[a].role === 'admin' && users[a].active) admins++; }  // 数
-    if (admins <= 1) { toast('至少要保留一个管理员', 'err'); return; }                            // 不能全降
-    var ok1 = await confirmBox('确定把 ' + target.username + ' 降为普通成员吗？');              // 确认
-    if (!ok1) return;                                                                            // 取消
-    target.role = 'member';                                                                       // 降级
-  } else {                                                                                        // 成员升级
-    var ok2 = await confirmBox('确定把 ' + target.username + ' 提升为管理员吗？（管理员拥有全部权限）');  // 确认
-    if (!ok2) return;                                                                              // 取消
-    target.role = 'admin';                                                                          // 升级
+  if (!target) { toast('成员不存在', 'err'); pageUsers(); return; }                 // 不存在
+
+  var newRole = (tier === 'admin') ? 'admin' : 'member';                          // 新角色
+  var newManage = (tier === 'manager');                                           // 是否带物料管理权
+  if (target.role === newRole && !!target.canManage === newManage) { pageUsers(); return; }  // 没变化：只重画，把下拉框归位
+
+  /* 撤掉管理员之前先数一下，别把最后一个启用的管理员也降了，否则谁都进不了用户管理 */
+  if (target.role === 'admin' && newRole !== 'admin') {
+    var admins = 0;                                                               // 启用的管理员数量
+    for (var a = 0; a < users.length; a++) {
+      if (!users[a].deleted && users[a].active && users[a].role === 'admin') admins++;  // 只数有效且启用的
+    }
+    if (admins <= 1) { toast('至少要保留一个启用的管理员', 'err'); pageUsers(); return; }  // 拦住
   }
-  stampPerm(target);                                                                                  // 盖同步时间戳 + 权限时间（漏了它，角色改动就不会同步到其他设备）
-  await DB.put('users', target);                                                                     // 写库
-  await Log.add('修改角色', target.username + ' 角色改为' + (target.role === 'admin' ? '管理员' : '成员'));  // 日志
-  toast('角色已更新', 'ok');                                                                          // 提示
-  pageUsers();                                                                                        // 刷新
+
+  /* 只有"涉及管理员"的改动才二次确认（提为管理员 / 撤掉管理员）。
+     成员 <-> 成员+物料管理 属于低风险的临时授权，原来就没有确认，这里保持一致。 */
+  if (target.role === 'admin' || newRole === 'admin') {
+    var ok = await confirmBox('确定把「' + target.username + '」的角色改为「' + ROLE_TIER_LABEL[tier] + '」吗？' +
+      (tier === 'admin' ? '\n（管理员拥有全部权限：物料 / 用户 / 设置 / 数据）'
+                        : '\n（将失去用户管理、系统设置、数据管理等权限）'));            // 说明后果
+    if (!ok) { pageUsers(); return; }                                               // 取消：重画，下拉框回到原值
+  }
+
+  target.role = newRole;                                                            // 写新角色
+  target.canManage = newManage;                                                     // 写物料管理权
+  stampPerm(target);                                                                // 盖同步时间戳 + 权限时间（漏了它，角色改动就不会同步到其他设备）
+  await DB.put('users', target);                                                    // 写库
+  await Log.add('修改角色', target.username + ' → ' + ROLE_TIER_LABEL[tier]);         // 日志
+  toast(target.username + ' 现在是「' + ROLE_TIER_LABEL[tier] + '」', 'ok');          // 提示
+  pageUsers();                                                                      // 刷新
 }
 
 /* 停用 / 启用账号 */

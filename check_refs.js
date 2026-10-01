@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 const dir = __dirname;
-const jsFiles = ['js/data.js', 'js/core.js', 'js/pages_main.js', 'js/pages_stats.js', 'js/pages_admin.js', 'js/pages_ai.js', 'js/main.js'];
+const jsFiles = ['js/data.js', 'js/core.js', 'js/pages_main.js', 'js/pages_stats.js', 'js/pages_admin.js', 'js/pages_ai.js', 'js/reconcile.js', 'js/main.js'];
 const htmlFile = 'index.html';
 
 let allText = '';
