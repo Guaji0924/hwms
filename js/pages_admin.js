@@ -34,6 +34,7 @@ function userRoleTier(u) {
 }
 
 async function pageUsers() {
+  closeRolePicker();                                                     // 重画前先收起角色面板，免得它挂在一个已经不存在的位置上
   if (!Auth.user || !isAdminNow()) {                                     // 权限检查（管理员"成员视角预览"时同样看不到）
     $('#page').innerHTML = '<div class="empty"><div class="e-ico">' + ICONS.lock + '</div>此页面仅管理员可见</div>';
     return;
@@ -69,20 +70,12 @@ async function pageUsers() {
          admin   → 管理员：全部权限（物料 / 用户 / 设置 / 数据）
        原来的"临时管理权限"列、"设为管理员 / 降为成员"按钮都由它取代。 */
     var tier = userRoleTier(u);                                             // 当前档位：member / manager / admin
-    /* 角色格：平时就是一个彩色徽章（看着干净，和表格里其他徽章一个样），点上去才弹选择。
-       做法是把一个透明的原生 select 铺在徽章上面 —— 外观完全由徽章决定，
-       弹出的却是浏览器原生选择器（手机上体验最好），不用自己写一套下拉菜单。
-       末尾的小三角只是提示"这里能点"。 */
+    /* 角色格：平时就是一个彩色徽章（和表格里其他徽章一个样），点一下才弹出自定义选择面板。
+       没用原生 select 是因为它弹出的列表套不了应用样式（灰白底、系统字体、没颜色），跟整体不搭。 */
     var roleBadge = '<span class="badge ' + ROLE_TIER_BADGE[tier] + '">' + ROLE_TIER_LABEL[tier] + '<span style="opacity:.5;font-size:9px">▾</span></span>';
     var roleCell = isSelf
       ? roleBadge                                                              // 自己：只显示不给改，防止把自己降级后没人能管用户
-      : '<span class="role-pick" title="点击修改角色">' + roleBadge +
-          '<select aria-label="修改角色" onchange="setUserRoleTier(\'' + u.id + '\', this.value)">' +
-            '<option value="member"' + (tier === 'member' ? ' selected' : '') + '>成员</option>' +
-            '<option value="manager"' + (tier === 'manager' ? ' selected' : '') + '>成员 + 物料管理</option>' +
-            '<option value="admin"' + (tier === 'admin' ? ' selected' : '') + '>管理员</option>' +
-          '</select>' +
-        '</span>';
+      : '<span class="role-pick" title="点击修改角色" onclick="openRolePicker(this,\'' + u.id + '\',\'' + tier + '\')">' + roleBadge + '</span>';
     rows += '<tr' + (isSelf ? ' style="background:var(--primary-light)"' : '') + '>' +  // 自己高亮
       '<td><div style="display:flex;align-items:center;gap:10px"><span class="user-avatar" style="width:30px;height:30px;font-size:13px;background:' + ROLE_TIER_AVATAR[tier] + '">' + escapeHtml(u.username.charAt(0).toUpperCase()) + '</span><b>' + escapeHtml(u.username) + (isSelf ? ' <span style="font-size:11px;color:var(--text-sub)">（我）</span>' : '') + '</b></div></td>' +
       /* 班级列：双击（或手机上长按）就地编辑，替代原来的"改班级"按钮 */
@@ -291,6 +284,90 @@ async function saveUserClassInline(userId, value, td, old) {
   await Log.add('修改班级', target.username + ' → ' + (v || '（已清空）'));      // 写日志
   toast('已把 ' + target.username + ' 的班级改为 ' + (v || '（未填）'), 'ok');   // 提示
   pageUsers();                                                                 // 重画整表（顺带把 data-cls 刷成新值）
+}
+
+/* ==================== 角色选择面板 ==================== */
+
+/* 当前打开的面板（同一时刻只允许开一个，不然点几下会叠一屏）
+   anchor = 面板挂在哪个徽章下面，用来实现"再点一次收起" */
+var RolePicker = { el: null, listeners: null, anchor: null };
+
+/* 关掉当前打开的角色面板：摘掉面板 + 卸掉为了它挂的全局监听 */
+function closeRolePicker() {
+  if (RolePicker.el && RolePicker.el.parentNode) {                              // 面板还挂在页面上
+    RolePicker.el.parentNode.removeChild(RolePicker.el);                        // 摘掉
+  }
+  RolePicker.el = null;                                                         // 清引用
+  RolePicker.anchor = null;                                                     // 清引用
+  if (RolePicker.listeners) {                                                   // 还有挂着的监听
+    var L = RolePicker.listeners;                                               // 取出来
+    document.removeEventListener('mousedown', L.out, true);                      // 点面板外面
+    window.removeEventListener('resize', L.out);                                 // 窗口尺寸变了
+    window.removeEventListener('scroll', L.out, true);                           // 页面滚动（fixed 定位会跟丢）
+    document.removeEventListener('keydown', L.key);                              // Esc
+    RolePicker.listeners = null;                                                 // 清引用
+  }
+}
+
+/* 点角色徽章 → 在徽章正下方弹出一个自定义小面板，列出三档角色供选择。
+   面板挂在 body 上、用 fixed 定位，是为了不被表格的横向滚动容器裁掉。 */
+function openRolePicker(anchor, userId, tier) {
+  if (RolePicker.el && RolePicker.anchor === anchor) { closeRolePicker(); return; }  // 再点同一个徽章 = 收起面板
+  closeRolePicker();                                                            // 换个徽章：先关掉原来开着的
+  var panel = document.createElement('div');                                    // 面板容器
+  panel.className = 'role-menu';                                                // 样式见 style.css
+  var tiers = ['member', 'manager', 'admin'];                                   // 三档，从上到下（权限递增）
+  var html = '';                                                                // 面板内容
+  for (var i = 0; i < tiers.length; i++) {
+    var t = tiers[i];                                                           // 当前这一档
+    var on = (t === tier);                                                      // 是不是他现在的档位
+    html += '<div class="role-menu-item' + (on ? ' is-on' : '') + '" data-tier="' + t + '">' +
+              '<span class="badge ' + ROLE_TIER_BADGE[t] + '">' + ROLE_TIER_LABEL[t] + '</span>' +
+              '<span class="role-menu-tick">' + (on ? '✓' : '') + '</span>' +   // 当前档位打个勾
+            '</div>';
+  }
+  panel.innerHTML = html;
+  document.body.appendChild(panel);                                             // 挂到 body 上（避开表格滚动容器）
+
+  /* 摆位置：默认贴在徽章正下方、左对齐；贴到窗口边缘就自动收回来或翻到上方 */
+  var r = anchor.getBoundingClientRect();                                       // 徽章的位置和大小
+  var pw = panel.offsetWidth;                                                   // 面板宽
+  var ph = panel.offsetHeight;                                                  // 面板高
+  var left = r.left;                                                            // 默认左对齐
+  if (left + pw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - pw - 8);   // 右边放不下：往左收
+  var top = r.bottom + 6;                                                       // 徽章下方留 6px
+  if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 6);      // 下方放不下：翻到上方
+  panel.style.left = left + 'px';                                               // 定位
+  panel.style.top = top + 'px';
+
+  RolePicker.el = panel;                                                        // 记下来，方便关
+  RolePicker.anchor = anchor;                                                    // 记下挂在哪个徽章下面
+
+  /* 点某一档 */
+  panel.addEventListener('click', function (e) {
+    var row = e.target.closest ? e.target.closest('.role-menu-item') : null;     // 找到被点的那一行
+    if (!row) return;                                                            // 没点到行上：不管
+    var picked = row.getAttribute('data-tier');                                  // 选中的档位
+    closeRolePicker();                                                           // 先关面板再提交
+    if (picked !== tier) setUserRoleTier(userId, picked);                        // 档位真变了才提交（没变就什么都不做）
+  });
+
+  /* 点面板外面 / 滚页面 / 改窗口大小 / 按 Esc → 关闭 */
+  var out = function (e) {
+    if (!RolePicker.el) return;                                                  // 已经关了：不管
+    if (RolePicker.el.contains(e.target)) return;                                // 点的是面板内部：不关
+    if (RolePicker.anchor && RolePicker.anchor.contains(e.target)) return;       // 点的是同一个徽章：交给它自己的 onclick 去"收起"，避免关了又立刻开
+    closeRolePicker();                                                           // 其余情况：关闭
+  };
+  var key = function (e) { if (e.key === 'Escape') closeRolePicker(); };          // Esc 关闭
+  RolePicker.listeners = { out: out, key: key };                                 // 存起来，关闭时好卸
+  setTimeout(function () {                                                       // 延后一拍再挂，免得"这次点击"立刻把面板关掉
+    if (!RolePicker.el) return;                                                  // 期间已经被关掉了就算了
+    document.addEventListener('mousedown', out, true);                           // 点外面关闭（捕获阶段，点哪都能收到）
+    window.addEventListener('resize', out);                                      // 窗口变化关闭
+    window.addEventListener('scroll', out, true);                                // 滚动关闭
+    document.addEventListener('keydown', key);                                   // Esc 关闭
+  }, 0);
 }
 
 /* ==================== 角色三档切换 ==================== */

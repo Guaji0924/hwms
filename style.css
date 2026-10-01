@@ -398,13 +398,23 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; } /* 表�
   -webkit-user-select: none; user-select: none;                  /* 长按过程中不选中文字 */
 }
 .cls-cell input { -webkit-user-select: text; user-select: text; }  /* 但输入框里的字要能正常选中编辑 */
-.role-pick { position: relative; display: inline-block; padding: 8px 6px; margin: -8px -6px; }  /* 角色格：外面看是徽章，里面盖着个透明下拉；负外边距把点击区域撑大（手机上更好按），不影响排版 */
-.role-pick select {                                               /* 透明铺满整个徽章：只负责接点击、弹浏览器原生选择器 */
-  position: absolute; left: 0; top: 0; width: 100%; height: 100%;
-  opacity: 0; cursor: pointer; border: none; background: none; padding: 0;
-  -webkit-appearance: none; appearance: none; font-size: 12px;
-}
+.role-pick { position: relative; display: inline-block; padding: 8px 6px; margin: -8px -6px; cursor: pointer; }  /* 角色格：点一下弹出选择面板；负外边距把点击区域撑大（手机上更好按），不影响排版 */
 .role-pick:hover .badge { filter: brightness(.94); }              /* 悬停微微加深，暗示这里能点 */
+
+/* 角色选择面板：挂在 body 上、fixed 定位，免得被表格的横向滚动容器裁掉 */
+.role-menu {
+  position: fixed; z-index: 150; min-width: 156px; padding: 6px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow-lg); animation: roleMenuIn .12s ease-out;
+}
+@keyframes roleMenuIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.role-menu-item {                                                 /* 一行一档角色 */
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 7px 9px; border-radius: 8px; cursor: pointer; transition: background .12s;
+}
+.role-menu-item:hover { background: var(--bg-hover); }            /* 悬停高亮 */
+.role-menu-item.is-on { background: var(--primary-light); }       /* 当前档位：淡主色底 */
+.role-menu-tick { color: var(--primary); font-weight: 700; font-size: 13px; width: 14px; text-align: center; }  /* 当前档位的对勾 */
 .tbl tbody tr:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); } /* 行悬停：主色微染，与表头区分 */
 .t-link { color: var(--primary); cursor: pointer; font-weight: 600; }     /* 所有可点击名称（表格内外统一主题色+手型） */
 .tbl .t-link { color: var(--primary); cursor: pointer; font-weight: 600; } /* 可点击的名称 */
