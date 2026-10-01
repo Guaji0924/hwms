@@ -173,6 +173,16 @@ var Sync = {
       var rows = await DB.all(store);                           // 全量读取（数据量不大，简单可靠）
       for (var i = 0; i < rows.length; i++) {                   // 逐条检查
         var t = rows[i].updatedAt || rows[i].createdAt || 0;    // 这条数据的"改动时间"
+        /* 自愈：早期版本写下的数据可能根本没有时间戳（比如旧的日志只有 time 字段），
+           算出来 t=0，永远不满足"晚于上次同步"，会一直卡在本机传不出去。
+           这里就地补上时间戳（优先用记录里的 time，没有就用当前时间），
+           补完当场就能上传 —— 不用让用户手动清理，历史数据自己会补回来。 */
+        if (t === 0) {                                          // 没有时间戳 = 老数据
+          t = rows[i].time || Date.now();                       // 用记录自带的时间，退而求其次用当前时间
+          rows[i].createdAt = t;                                // 补创建时间
+          rows[i].updatedAt = t;                                // 补修改时间
+          await DB.put(store, rows[i]);                         // 写回本机（下次就不会再补了）
+        }
         if (since === 0 || t > since) {                         // 晚于上次同步才上传；since=0 是"全量补种"，一条不落
           changes.push({ store: store, id: rows[i].id, data: rows[i] });  // 打包
         }
@@ -306,6 +316,26 @@ var Sync = {
       lastSync: this.state.lastSync
     };
     await DB.setSetting('syncConfig', cfg);                      // 写库
+  },
+
+  /* ---------- 以本机数据为"完整快照"，让服务器清理掉本机没有的行 ----------
+     用途：数据在多端之间已经不一致时（早期版本的清空/初始化是真删，别的设备
+     根本不知道要删），那些历史残留会永远留在服务器和其他设备上 —— 没有任何
+     设备还记得它们，所以谁也传不出"删除"这个动作。只有让服务器以本机的完整
+     快照为准去比对，才能把它们一并打成墓碑清掉。
+     只在「所有数据初始化」时调用，属于危险操作，调用方必须先让用户确认。 */
+  pushFullSnapshot: async function () {
+    if (!this.state.enabled) throw new Error('尚未启用同步，无法清理云端数据');
+    if (!this.state.url) throw new Error('尚未填写同步服务器地址');
+    if (!navigator.onLine) throw new Error('当前设备没有联网，无法清理云端数据');
+    var changes = await this.collectLocalChanges(0);             // 全量收集本机所有行（含刚打的墓碑）
+    var res = await fetchWithTimeout(this.state.url + '/api/push', {  // 推送接口（带 30 秒超时）
+      method: 'POST',
+      headers: this.authHeaders(),
+      body: JSON.stringify({ device: this.state.device, full: true, changes: changes })
+    });
+    if (!res.ok) throw new Error('服务器返回 ' + res.status);     // 服务器错误
+    return await res.json();                                     // { ok, accepted, tombstoned }
   }
 };
 

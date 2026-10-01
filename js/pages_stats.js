@@ -1128,14 +1128,42 @@ async function importFullBackup(input) {
     try {                                                                                                // 容错
       var data = JSON.parse(reader.result);                                                               // 解析 JSON
       if (!data.materials || !data.records || !data.users) { toast('文件格式不对，不是本系统的备份', 'err'); return; }  // 校验
-      await DB.clear('materials'); await DB.clear('records'); await DB.clear('users');                      // 清空
-      await DB.clear('logs'); await DB.clear('settings');                                                    // 清空
-      await DB.bulkPut('materials', data.materials);                                                          // 写回
-      await DB.bulkPut('records', data.records);                                                               // 写回
-      await DB.bulkPut('users', data.users);                                                                   // 写回
-      await DB.bulkPut('logs', data.logs || []);                                                                 // 写回
-      await DB.bulkPut('settings', data.settings || []);                                                          // 写回
-      Auth.logout();                                                                                              // 强制重新登录
+
+      /* 1) 先给本机现有的行打墓碑，而不是直接清表。
+         直接清表不留痕迹，"覆盖恢复"这个动作就同步不出去，其他设备上还是旧数据。 */
+      var stores = ['materials', 'records', 'users', 'logs'];                                                 // 参与同步的四张表
+      for (var s = 0; s < stores.length; s++) {                                                               // 逐张表处理
+        var oldRows = await DB.all(stores[s]);                                                                // 取出本机现有的行（含墓碑）
+        for (var oi = 0; oi < oldRows.length; oi++) {                                                         // 逐条
+          if (!oldRows[oi].deleted) await softDelete(stores[s], oldRows[oi].id);                               // 还没删的才打墓碑
+        }
+      }
+
+      /* 2) 写入备份内容，并给每条盖上新的时间戳。
+         备份里的 updatedAt 是"导出那一刻"的旧值，不刷新的话服务器会认为它没有
+         服务器上现有的记录新而拒收（冲突规则是时间戳旧的输），恢复就等于白恢复。 */
+      var now = Date.now();                                                                                   // 本次恢复的统一时间
+      function stampRestored(rows) {                                                                          // 给一批数据盖时间戳
+        var list = rows || [];                                                                                // 容错：备份里可能没有这张表
+        for (var ri = 0; ri < list.length; ri++) {                                                            // 逐条
+          list[ri].createdAt = list[ri].createdAt || list[ri].time || now;                                    // 补创建时间（老日志只有 time 字段）
+          list[ri].updatedAt = now;                                                                           // 刷新修改时间 → 这次上传一定赢过服务器
+        }
+        return list;                                                                                          // 原样返回
+      }
+      await DB.bulkPut('materials', stampRestored(data.materials));                                            // 写回物料
+      await DB.bulkPut('records', stampRestored(data.records));                                                // 写回记录
+      await DB.bulkPut('users', stampRestored(data.users));                                                    // 写回账号
+      await DB.bulkPut('logs', stampRestored(data.logs));                                                      // 写回日志
+
+      /* 3) 设置表：恢复备份内容，但要保住同步进度（syncConfig 里的 lastSync），
+         否则下次同步会从零全量拉一遍，把服务器上的历史垃圾数据又拉回本机。 */
+      var keepSync = await DB.getSetting('syncConfig', null);                                                  // 先存下同步进度
+      await DB.clear('settings');                                                                              // 清空设置
+      await DB.bulkPut('settings', data.settings || []);                                                        // 写回备份里的设置
+      if (keepSync) await DB.setSetting('syncConfig', keepSync);                                                // 再把同步进度写回去
+
+      Auth.logout();                                                                                            // 强制重新登录
       location.hash = '#/login';                                                                                  // 去登录页
       location.reload();                                                                                           // 整页刷新最稳妥
     } catch (err) {                                                                                                 // 出错
@@ -1224,12 +1252,16 @@ async function clearBizData() {
   if (!Auth.user || Auth.user.role !== 'admin') { toast('只有管理员可以清空', 'err'); return; }                      // 权限
   var ok = await confirmBox('将只删除【示例数据】（载入的示例元件和模拟记录），你自己创建的物料和记录会保留。确定吗？', '清空示例');  // 确认
   if (!ok) return;                                                                                                      // 取消
+  /* 注意：这里必须用 softDelete（打删除墓碑），不能直接 DB.del 真删。
+     真删不会留下任何痕迹，同步引擎就没东西可上传 —— 别的设备根本不知道
+     "这些数据被删了"，于是手机上示例数据永远清不掉；等你再载入一次示例，
+     新数据又会带着新的 id 推上去，和手机上的旧的叠在一起，越滚越多。 */
   var mats = await DB.all('materials');                                                                                  // 找示例物料
   var delM = 0;
-  for (var i = 0; i < mats.length; i++) { if (mats[i].source === 'demo') { await DB.del('materials', mats[i].id); delM++; } }
+  for (var i = 0; i < mats.length; i++) { if (mats[i].source === 'demo' && !mats[i].deleted) { await softDelete('materials', mats[i].id); delM++; } }
   var recs = await DB.all('records');                                                                                   // 找示例记录
   var delR = 0;
-  for (var j = 0; j < recs.length; j++) { if (recs[j].source === 'demo') { await DB.del('records', recs[j].id); delR++; } }
+  for (var j = 0; j < recs.length; j++) { if (recs[j].source === 'demo' && !recs[j].deleted) { await softDelete('records', recs[j].id); delR++; } }
   await Log.add('清空示例数据', '删除示例物料 ' + delM + ' 种、记录 ' + delR + ' 条');                                       // 日志
   await State.refreshMaterials();                                                                                           // 刷新
   toast('已删除示例数据（物料 ' + delM + '，记录 ' + delR + '）', 'ok');                                                         // 提示
@@ -1240,14 +1272,57 @@ async function clearBizData() {
 /* 所有数据初始化（恢复出厂：清空全部业务数据/设置/账号，重置默认 admin/202306ZNKZXH.2026admin-lgj） */
 async function factoryReset() {
   if (!Auth.user || Auth.user.role !== 'admin') { toast('只有管理员可以初始化', 'err'); return; }
-  var ok = await confirmBox('将清空【全部数据】并恢复到系统刚安装的初始状态：\n· 所有物料、出入库记录、操作日志、配料/BOM 项目全部删除\n· AI 配置等所有设置清空\n· 账号重置为默认管理员 admin / 202306ZNKZXH.2026admin-lgj\n\n此操作不可撤销，建议先到上面导出全库备份！确定继续吗？', '初始化');
+  var ok = await confirmBox('将清空【全部数据】并恢复到系统刚安装的初始状态：\n· 所有物料、出入库记录、操作日志、配料/BOM 项目全部删除\n· AI 配置等所有设置清空\n· 账号重置为默认管理员 admin / 202306ZNKZXH.2026admin-lgj\n\n⚠ 已开启多端同步时，此操作会连同云端和其他设备上的数据一起清空。\n\n此操作不可撤销，建议先到上面导出全库备份！确定继续吗？', '初始化');
   if (!ok) return;
-  await DB.clear('materials');
-  await DB.clear('records');
-  await DB.clear('logs');
-  await DB.clear('ai_projects');
-  await DB.clear('settings');
-  await DB.clear('users');
-  PageCache = {}; LastPath = '';
-  location.reload();                                                                                                        // reload 后自动建默认 admin
+
+  /* 1) 业务数据：逐条打"删除墓碑"，而不是直接清表。
+     直接清表（DB.clear）不留痕迹，同步引擎没东西可传，别的设备就完全不知道
+     "这些数据被删了"，会一直显示旧数据，还会和之后新建的数据叠成重复。
+     打墓碑之后，"删除"这个动作本身才能同步出去，各端才会一起清干净。 */
+  var stores = ['materials', 'records', 'logs'];                 // 需要同步出去的三张业务表
+  for (var s = 0; s < stores.length; s++) {                      // 逐张表处理
+    var rows = await DB.all(stores[s]);                          // 取出全部（含已有墓碑）
+    for (var i = 0; i < rows.length; i++) {                      // 逐条
+      if (!rows[i].deleted) await softDelete(stores[s], rows[i].id);  // 还没删的才打墓碑（避免重复盖时间戳）
+    }
+  }
+
+  /* 2) 账号：除"兜底管理员"外全部打墓碑，兜底管理员重置为默认密码和角色。
+     为什么单独留这一条：它的 id 是写死的（user_bootstrap_admin），各台设备都指向同一条记录。
+     早期版本每台设备第一次打开都会各自生成一个随机 id 的同名 admin，同步之后
+     服务器上就堆出好几个 admin，怎么删都删不干净 —— 保留固定 id 才能根治。 */
+  var users = await DB.all('users');                             // 全部账号
+  for (var u = 0; u < users.length; u++) {                       // 逐条
+    if (users[u].id === 'user_bootstrap_admin') continue;         // 兜底管理员留到最后统一重置
+    if (!users[u].deleted) await softDelete('users', users[u].id);  // 其余打墓碑
+  }
+  var salt = uid('salt');                                        // 新的随机盐
+  var hash = await hashPassword('202306ZNKZXH.2026admin-lgj', salt);  // 默认密码的哈希
+  await DB.put('users', {                                        // 写回兜底管理员（重置为默认状态）
+    id: 'user_bootstrap_admin', username: 'admin', passwordHash: hash, salt: salt,
+    role: 'admin', active: true, createdAt: Date.now(), updatedAt: Date.now(), lastLogin: null
+  });
+
+  /* 3) 本机专用数据：AI 配置、配料项目、界面偏好等本来就不参与同步，直接清掉即可。
+     但同步进度（syncConfig 里的 lastSync）必须留着 —— 连它一起清掉的话，
+     下次同步会"从零全量拉一遍"，把服务器上的历史垃圾数据又拉回本机。 */
+  var keepSync = await DB.getSetting('syncConfig', null);         // 先把同步进度存下来
+  await DB.clear('ai_projects');                                  // 配料/BOM 项目（不同步）
+  await DB.clear('settings');                                     // 全部设置
+  if (keepSync) await DB.setSetting('syncConfig', keepSync);       // 把同步进度写回去
+
+  /* 4) 让服务器以本机为"完整快照"，把本机没有的行也一并打成墓碑。
+     只清本机是不够的：服务器和其他设备上还留着一些"只在那儿存在过"的历史残留，
+     本机根本没有它们的记录，传不出删除动作。必须由服务器按快照比对才能清掉。 */
+  if (typeof Sync !== 'undefined' && Sync.pushFullSnapshot) {
+    try {
+      await Sync.pushFullSnapshot();                                // 通知服务器按本机快照清理
+    } catch (e) {
+      /* 没联网 / 没开同步时跳过：本机初始化照样完成，只是云端清不掉 */
+      toast('本机已初始化，但云端数据未清理：' + e.message, 'err');
+    }
+  }
+
+  PageCache = {}; LastPath = '';                                  // 作废页面缓存
+  location.reload();                                              // 刷新页面，回到干净的初始状态
 }

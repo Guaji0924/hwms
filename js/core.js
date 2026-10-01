@@ -450,8 +450,8 @@ var Auth = {
     var uidSaved = localStorage.getItem('hwms_remember') || sessionStorage.getItem('hwms_session');  // 优先找"记住我"
     if (!uidSaved) return null;                               // 没有保存过会话
     var u = await DB.get('users', uidSaved);                   // 按保存的用户 id 查询
-    if (u && u.active) { this.user = u; return u; }           // 用户存在且启用：恢复登录
-    return null;                                              // 否则未登录
+    if (u && u.active && !u.deleted) { this.user = u; return u; }  // 账号存在、启用、且没被打墓碑：恢复登录
+    return null;                                              // 否则未登录（被删除的账号不能继续用）
   },
 
   /* 登录：成功返回 true 并把会话写入本地存储 */
@@ -473,6 +473,10 @@ var Auth = {
     if (hash !== u.passwordHash) return { ok: false, msg: '密码错误' };  // 比对失败
     var isFirstLogin = !u.lastLogin;                           // 之前从没登录过 → 本次是该账号第一次登录
     u.lastLogin = Date.now();                                 // 更新最近登录时间
+    /* 必须盖同步时间戳，否则这次改动传不出去：
+       同步引擎只上传"改动时间晚于上次同步"的数据，没有新时间戳的账号行会被漏掉，
+       结果就是别的设备打开用户管理，看到的永远是"从未登录"。 */
+    stampSync(u);                                             // 盖上最后修改时间
     await DB.put('users', u);                                 // 保存
     this.user = u;                                             // 内存中记住当前用户
     if (remember) { localStorage.setItem('hwms_remember', u.id); sessionStorage.removeItem('hwms_session'); }  // 记住我：长期保存
@@ -791,12 +795,20 @@ function confirmBox(msg, okText) {
 var Log = {
   /* 写一条日志：Log.add('删除物料', '删除了 OLED 屏') */
   add: async function (action, detail) {
+    var now = Date.now();                                        // 创建时间和修改时间用同一个值
     await DB.put('logs', {                                       // 写入日志表
       id: uid('log'),                                            // 唯一编号
       user: Auth.user ? Auth.user.username : '系统',              // 操作人（未登录记"系统"）
       action: action,                                            // 动作
       detail: detail || '',                                      // 详情
-      time: Date.now()                                           // 时间
+      time: now,                                                 // 时间（页面展示用）
+      /* createdAt / updatedAt 是同步引擎判断"这条要不要上传"的唯一依据
+         （见 sync.js 的 collectLocalChanges：改动时间 = updatedAt || createdAt || 0）。
+         早期版本这里只有 time，同步引擎算出来是 0，永远不满足"大于上次同步时间"，
+         于是首次同步之后写下的日志一条都传不出去 —— 别的设备永远看不到你的操作，
+         日志页面就停在某个时间点不动了。这两个字段不能少。 */
+      createdAt: now,                                            // 创建时间
+      updatedAt: now                                             // 最后修改时间
     });
   }
 };

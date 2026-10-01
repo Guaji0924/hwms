@@ -64,5 +64,41 @@ export async function onRequest(context) {
     }
   }
 
-  return json({ ok: true, accepted: accepted, serverTime: Date.now() });
+  /* 4. 全量快照模式（请求体带 full: true）
+     把服务器上"本次没上传的行"统一打成删除墓碑。
+     为什么需要它：数据在多端之间已经不一致时（早期版本的清空/初始化是真删，
+     别的设备根本不知道要删），那些旧行会永远留在服务器和其他设备上 ——
+     它们没有任何设备还记得，所以谁也传不出它们的"删除"动作，只能由服务器
+     按"以本次上传的完整快照为准"来清理。
+     注意这里必须打墓碑而不是直接删行：只有墓碑才会带着新的 rev 被其他设备拉走，
+     其他设备才会跟着删掉；直接删行的话它们永远不知道，反而会再推回来。 */
+  var tombstoned = 0;                                          // 被清理掉的行数
+  if (body && body.full) {                                     // 客户端要求以它为完整快照
+    var keep = {};                                             // 本次快照里要保留的行
+    for (var j = 0; j < changes.length; j++) {                 // 遍历上传内容
+      if (SYNC_STORES.indexOf(changes[j].store) < 0) continue;  // 白名单外的忽略
+      if (!changes[j].id) continue;                             // 没有主键的忽略
+      keep[changes[j].store + '\u0000' + String(changes[j].id)] = true;  // 记下"要保留"
+    }
+    var now = Date.now();                                      // 统一用服务器时间，避免各端时钟不一致
+    var allRows = await env.DB.prepare('SELECT store, id, data FROM sync_rows').all();  // 服务器现有全部行
+    var list = (allRows && allRows.results) || [];             // 结果数组
+    for (var k = 0; k < list.length; k++) {                    // 逐行检查
+      var row = list[k];                                       // 当前行
+      if (SYNC_STORES.indexOf(row.store) < 0) continue;         // 白名单外的不管
+      if (row.store === 'settings') continue;                   // 分类树不参与整体清理，避免把各端的物料分类清空
+      if (keep[row.store + '\u0000' + String(row.id)]) continue;  // 快照里有这一行：保留
+      var d = {};                                              // 解析原有内容
+      try { d = JSON.parse(row.data) || {}; } catch (e) { d = {}; }  // 历史脏数据读不出来就当空对象
+      if (d.deleted) continue;                                  // 已经是墓碑了，跳过
+      d.deleted = true;                                         // 打上删除墓碑
+      d.updatedAt = now;                                        // 时间用服务器时间，保证盖过各端本地的时间戳
+      await env.DB.prepare(                                     // 更新这一行
+        'UPDATE sync_rows SET data = ?, rev = ? WHERE store = ? AND id = ?'
+      ).bind(JSON.stringify(d), now, row.store, String(row.id)).run();
+      tombstoned++;                                             // 计数
+    }
+  }
+
+  return json({ ok: true, accepted: accepted, tombstoned: tombstoned, serverTime: Date.now() });
 }

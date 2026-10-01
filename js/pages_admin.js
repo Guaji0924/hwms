@@ -118,7 +118,31 @@ async function repairUserSync() {
     '请先确认本机用户列表里的角色、班级、启用状态都是正确的；\n' +
     '上传后其他设备会自动同步成一样的。\n\n确定继续吗？');                                  // 确认（避免在错误的那台设备上误点）
   if (!ok) return;                                                                        // 取消
-  var users = await DB.all('users');                                                       // 全部用户
+  var me = (Auth.user || {}).id;                                                            // 当前登录账号的 id（不能被合并掉，否则把自己踢下线）
+
+  /* 第一步：先把重复账号合并掉。
+     早期版本每台设备第一次打开都会各自自动生成一个随机 id 的同名 admin，
+     同步之后这些同名账号会汇总到服务器上，用户列表里就会堆出好几个 admin，
+     而且它们既不是"删除"状态、内容又互相覆盖，怎么改都清不干净。
+     规则：同名账号只保留"创建时间最早"的那一个（也就是协会真正在用的原始账号），
+     其余的打墓碑删掉 —— 打墓碑才能把"删除"这个动作同步到其他设备。 */
+  var all = await DB.all('users');                                                          // 全部账号（含墓碑）
+  var keptByName = {};                                                                       // 每个用户名已保留的那一条
+  for (var k = 0; k < all.length; k++) {                                                      // 逐个账号
+    var cu = all[k];                                                                          // 当前账号
+    if (cu.deleted) continue;                                                                  // 墓碑跳过
+    var name = cu.username;                                                                     // 用户名
+    if (!keptByName[name]) { keptByName[name] = cu; continue; }                                  // 这个名字第一次出现：先留着
+    var kept = keptByName[name];                                                                // 已保留的那条
+    var drop = ((cu.createdAt || 0) < (kept.createdAt || 0)) ? kept : cu;                        // 创建更晚的那个算重复
+    var win = (drop === kept) ? cu : kept;                                                       // 另一个是要保留的
+    if (drop.id === me) { var tmp = drop; drop = win; win = tmp; }                                // 要删的正好是自己 → 换一下，保住当前登录账号
+    await softDelete('users', drop.id);                                                          // 给重复的那条打墓碑
+    keptByName[name] = win;                                                                      // 更新"已保留"
+  }
+
+  /* 第二步：以本机为准，把所有有效账号重新盖时间戳上传 */
+  var users = await DB.all('users');                                                         // 重新读一遍（合并结果已生效）
   var n = 0;                                                                                // 实际上传数量
   for (var i = 0; i < users.length; i++) {                                                   // 逐个账号
     if (users[i].deleted) continue;                                                           // 墓碑跳过
