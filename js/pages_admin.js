@@ -313,7 +313,9 @@ async function pageSettings() {
         '<button class="btn btn-outline" onclick="manualSyncNow()">立即同步一次</button>' +
       '</div>' +
       '<div class="ai-quote" id="sync-test-result" style="display:none"></div>' +
-      '<div style="font-size:12.5px;color:var(--text-sub);margin-top:8px">上次同步：<span id="sync-last-text">' + (syncCfg.lastSync ? fmtDate(syncCfg.lastSync) : '从未同步') + '</span></div>' +
+      /* 把"本机实际连的服务器地址"显示出来：多设备对不上号时，一眼就能看出哪台连的是哪个后端 */
+      '<div style="font-size:12.5px;color:var(--text-sub);margin-top:8px">上次同步：<span id="sync-last-text">' + (syncCfg.lastSync ? fmtDate(syncCfg.lastSync) : '从未同步') + '</span><br>' +
+      '本机实际使用的服务器：<b>' + escapeHtml(syncEffUrl || '（还没确定，无法同步）') + '</b>' + (syncEffKey ? '（已带密钥）' : '（未带密钥）') + '</div>' +
     '</div>' +
     /* 主题 */
     '<div class="card">' +
@@ -575,10 +577,11 @@ async function saveSyncConfig() {
 
   /* admin 修改时，同时发送到服务器保存（全体成员自动同步） */
   var isAdmin = (typeof Auth !== 'undefined' && Auth.user && Auth.user.role === 'admin');
+  var serverSaved = null;                                                  // 记录配置有没有真正写进服务器：null=没试，true=成功，false=失败
   if (isAdmin && effUrl) {
     try {
       var adminToken = cfg.key || SYNC_DEFAULT.key || '';                  // 用密钥作为 admin token
-      await fetch(effUrl + '/api/sync-config', {
+      var res = await fetch(effUrl + '/api/sync-config', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -590,16 +593,24 @@ async function saveSyncConfig() {
           key: cfg.key                                                     // 服务器端保存的密钥
         })
       });
+      serverSaved = res.ok;                                                // 必须看 HTTP 状态码，光"没报错"不代表服务器收下了
+      if (!res.ok) console.log('同步配置写入服务器被拒绝，HTTP ' + res.status);
     } catch (e) {
-      /* 服务器可能没启动或旧版本，静默失败不影响本地保存 */
-      console.log('同步配置到服务器失败（可能服务器未启动或是旧版本）:', e);
+      serverSaved = false;                                                 // 服务器没启动、没有这个接口（如 Cloudflare Pages）等
+      console.log('同步配置到服务器失败（服务器未启动，或该后端没有 /api/sync-config 接口）:', e);
     }
   }
 
   await DB.setSetting('syncConfig', cfg);                                  // 写库
   if (typeof Sync !== 'undefined' && Sync.applyConfig) Sync.applyConfig(cfg);  // 通知同步引擎立即生效
   await Log.add('修改同步设置', cfg.enabled ? '启用，服务器 ' + effUrl : '停用');  // 日志
-  toast('同步设置已保存' + (cfg.enabled ? '，稍后自动开始同步' : ''), 'ok');  // 提示
+  /* 关键提醒：配置没写进服务器时，别的设备（手机等）不会自动拿到它，
+     必须明确告诉 admin，否则他会以为"全协会都生效了"，其实只有本机在同步 */
+  if (serverSaved === false) {
+    toast('本机已保存，但配置没能写入服务器，其他设备不会自动生效：Cloudflare Pages 后端没有 /api/sync-config 接口，请把密钥填进 js/sync.js 的 SYNC_DEFAULT.key 后重新部署', 'warn');
+  } else {
+    toast('同步设置已保存' + (cfg.enabled ? '，稍后自动开始同步' : ''), 'ok');  // 提示
+  }
 }
 
 /* 测试同步服务器连通性（只测不改配置） */
@@ -626,6 +637,8 @@ async function manualSyncNow() {
   toast('正在同步……', 'ok');                                               // 提示
   try {
     var r = await Sync.syncNow();                                          // 执行一轮同步
+    /* busy = 后台那一轮还没跑完。以前这里会显示"同步完成：上传 0 条"，把真实的失败藏起来 */
+    if (r.busy) { toast('后台正在同步中，请等这一轮结束（约几秒）后再点', 'warn'); return; }
     toast('同步完成：上传 ' + r.pushed + ' 条，下载 ' + r.pulled + ' 条', 'ok');  // 结果提示
     var t = $('#sync-last-text');                                          // 更新"上次同步"显示
     if (t) t.textContent = fmtDate(Date.now());

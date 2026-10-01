@@ -269,7 +269,10 @@ var server = http.createServer(function (req, res) {
       ok: true,
       enabled: syncConfig.enabled,
       url: syncConfig.url,                                   // 留空表示"用当前域名"
-      key: syncConfig.key ? '***' : ''                     // 密钥掩码显示，实际同步时从服务器环境变量校验
+      /* 这里绝不能下发掩码 '***'：前端会把它当成真密钥发回来，服务器一比对就 401。
+         密钥请统一写在 js/sync.js 顶部的 SYNC_DEFAULT.key 里（或各设备在设置页自行填写） */
+      key: '',
+      needKey: !!SYNC_KEY                                    // 告诉前端"本服务器要求密钥"，便于给出准确提示
     });
   }
   if (urlPath === '/api/sync-config' && req.method === 'POST') {  // 保存同步配置：admin 在前端设置页修改

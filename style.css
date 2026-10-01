@@ -627,6 +627,12 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; } /* 表�
 .login-tip { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; font-size: 12.5px; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; } /* 首次运行提示条 */
 .login-err { color: var(--danger); font-size: 13px; margin-bottom: 10px; display: none; } /* 登录错误提示 */
 .login-foot { text-align: center; font-size: 14px; color: #9ca3af; margin-top: 24px; } /* 底部版权 */
+/* 登录页的同步状态提示条：新设备靠它判断"服务器上的账号同步下来了没" */
+.login-sync { font-size: 13px; line-height: 1.65; margin-top: 14px; padding: 9px 12px; border-radius: 10px; text-align: left; background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
+.login-sync.ls-on { background: rgba(16,185,129,.10); color: #047857; border-color: rgba(16,185,129,.35); } /* 已同步 */
+.login-sync.ls-err { background: rgba(239,68,68,.10); color: #b91c1c; border-color: rgba(239,68,68,.35); } /* 同步失败 */
+.login-sync.ls-warn { background: rgba(245,158,11,.12); color: #b45309; border-color: rgba(245,158,11,.35); } /* 离线 / 未启用 */
+.login-sync.ls-busy { background: rgba(79,70,229,.10); color: #4f46e5; border-color: rgba(79,70,229,.30); } /* 同步中 */
 .login-card .form-item label { font-size: 16px; } /* 登录表单标签放大 */
 .login-card .btn-lg { font-size: 18px; padding: 15px 22px; } /* 登录按钮放大 */
 .login-card #lg-remember + label { font-size: 15px; } /* 记住我文字放大 */

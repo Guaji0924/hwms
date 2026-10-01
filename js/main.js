@@ -127,6 +127,9 @@ function renderLogin() {
             '<input type="checkbox" id="lg-remember" checked /><label for="lg-remember" style="margin:0;font-weight:400;cursor:pointer">记住我（7 天内免登录）</label>' +
           '</div>' +
           '<button class="btn btn-primary btn-lg btn-block" onclick="doLogin()">登 录</button>' +
+          /* 同步状态提示条：新设备第一次打开时，成员账号要靠同步从服务器拉下来，
+             这里必须让用户看得见进度，否则会以为"非得先登 admin 才能同步" */
+          '<div class="login-sync" id="login-sync">正在检查多端同步状态…</div>' +
           '<div class="login-foot">数据保存在本机浏览器 · 断网可用 · 免费开源</div>' +
         '</div>' +
       '</div>' +

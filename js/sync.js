@@ -22,7 +22,11 @@
 var SYNC_DEFAULT = {
   enabled: true,     // 默认就开启多端同步（填 false 则默认不开，需要各自手动开启）
   url: '',           // 服务器地址：留空 = 自动用"网页自己的地址"
-  key: ''            // 同步密钥：从服务器拉取
+  /* ★ 同步密钥（最容易踩坑的一行）★
+     服务器端设了 SYNC_KEY（Cloudflare 环境变量 / server.js 环境变量）时，
+     必须把同一串密钥填在下面，否则手机等没填过密钥的设备会一直返回 401 同步失败。
+     密钥不会由服务器自动下发（下发就等于公开，锁就白上了），只能写在这里或各设备手动填。 */
+  key: ''
 };
 
 /* 取"网页自己的地址"：只有通过 http / https 打开才有意义（双击本地文件没有服务器） */
@@ -31,22 +35,44 @@ function syncOwnOrigin() {
   return '';                                                                                     // file:// 打开：拿不到服务器地址
 }
 
+/* ---------- 带超时的 fetch：给所有同步网络请求加一个"最多等多久"的上限 ----------
+   为什么需要它：服务器地址写错、手机连的不是同一个网络时，请求可能一直挂着不返回，
+   同步就会永远卡在"同步中"，之后点"立即同步"全都变成假的 0 条，真正的故障被藏起来。
+   这里统一加 30 秒上限，超时就中断并抛出一句人话错误，让问题暴露出来。 */
+async function fetchWithTimeout(url, options, ms) {
+  var ctrl = new AbortController();                                    // 中断控制器
+  var timer = setTimeout(function () { ctrl.abort(); }, ms || 30000);  // 到点自动中断
+  var opt = Object.assign({}, options || {}, { signal: ctrl.signal }); // 把中断信号挂到请求上
+  try {
+    return await fetch(url, opt);                                      // 正常发请求
+  } catch (e) {
+    /* 被我们主动中断的请求，错误信息换成新手看得懂的话 */
+    if (e && e.name === 'AbortError') throw new Error('连接同步服务器超时（30 秒无响应）：请检查"同步服务器地址"是否写对、本机和服务器是否在同一个网络');
+    throw e;                                                           // 其他网络错误（如断网）原样抛出
+  } finally {
+    clearTimeout(timer);                                               // 无论成败都要清掉定时器
+  }
+}
+
 /* 从服务器拉取最新同步配置（admin 改后成员自动同步） */
 async function fetchServerConfig() {
   try {
     var origin = syncOwnOrigin();                                // 当前网页的域名
     if (!origin) return null;                                    // file:// 打开：没有服务器
-    var res = await fetch(origin + '/api/sync-config', {         // 请求服务器配置
+    var res = await fetchWithTimeout(origin + '/api/sync-config', {  // 请求服务器配置（带超时，避免卡住启动）
       method: 'GET',
       headers: { 'Content-Type': 'application/json' }
-    });
+    }, 8000);
     if (!res.ok) return null;                                    // 服务器没这个接口（旧版本）
     var data = await res.json();                                 // 解析应答
     if (!data || !data.ok) return null;                          // 服务器返回错误
     return {
       enabled: data.enabled !== false,                           // 默认 true
       url: data.url || '',                                       // 服务器指定的地址（留空 = 用当前域名）
-      key: data.key || ''                                        // 服务器下发的密钥（可能掩码显示）
+      /* '***' 是服务器用来"掩码显示"的占位符，绝不能当成真密钥拿去请求，
+         否则客户端会带着 x-sync-key: *** 去同步，服务器一比对就返回 401 */
+      key: (data.key && data.key !== '***') ? data.key : '',
+      needKey: !!data.needKey                                    // 服务器是否要求密钥（用来提前给出提示）
     };
   } catch (e) {
     return null;                                                 // 网络错误、服务器未启动等
@@ -102,6 +128,13 @@ var Sync = {
     this.state.enabled = (cfg && cfg.enabledSet) ? !!cfg.enabled : !!SYNC_DEFAULT.enabled;
     this.resolve(cfg ? cfg.url : '', cfg ? cfg.key : '');       // 合成地址与密钥
     if (!this.state.url) this.state.enabled = false;            // 拿不到服务器地址（如本地双击打开）→ 只能本地模式
+
+    /* 服务器明说"我要求密钥"，但本机一个密钥都没有：
+       提前把原因写进 lastError，登录页提示条立刻就能说清问题，
+       不用等一轮请求失败（401）才知道 */
+    if (serverCfg && serverCfg.needKey && !this.state.key) {
+      this.state.lastError = '服务器要求同步密钥，但本机没有：请管理员把密钥填进 js/sync.js 的 SYNC_DEFAULT.key，或取消服务器上的 SYNC_KEY';
+    }
 
     var self = this;                                            // 保存 this
     /* 浏览器"联网/断网"事件：网络一恢复就立刻同步一次 */
@@ -178,7 +211,10 @@ var Sync = {
 
   /* ---------- 执行一轮完整同步：先推后拉 ---------- */
   syncNow: async function () {
-    if (this.state.syncing) return { pushed: 0, pulled: 0 };    // 正在同步：直接返回防重入
+    /* 已经有一轮同步在跑（比如 8 秒定时任务刚触发，或上一轮请求卡住）：
+       不能返回 0 条冒充成功，否则"立即同步"按钮会谎报"同步完成：上传 0 条"。
+       这里返回 busy 标记，让按钮提示用户稍等，真实错误才不会被掩盖 */
+    if (this.state.syncing) return { pushed: 0, pulled: 0, busy: true };
     if (!this.state.enabled) throw new Error('尚未启用同步，请先到 系统设置 里开启');   // 没开
     if (!navigator.onLine) throw new Error('当前设备没有联网');  // 断网
     if (!this.state.url) throw new Error('尚未填写同步服务器地址');  // 没地址
@@ -189,17 +225,19 @@ var Sync = {
       var local = await this.collectLocalChanges(this.state.lastSync);  // 收集
       var pushed = 0;                                           // 实际推送条数
       if (local.length > 0) {                                   // 有东西才推
-        var pushRes = await fetch(this.state.url + '/api/push', {   // 推送接口
+        var pushRes = await fetchWithTimeout(this.state.url + '/api/push', {  // 推送接口（带 30 秒超时）
           method: 'POST',                                       // POST 方式
           headers: this.authHeaders(),                          // JSON 体 + 同步密钥
           body: JSON.stringify({ device: this.state.device, changes: local })  // 数据
         });
-        if (!pushRes.ok) throw new Error('上传失败，服务器返回 ' + pushRes.status);  // 服务器报错
+        if (pushRes.status === 401) throw new Error('同步密钥不正确：这台服务器要求同步密钥，请到 系统设置 → 多端同步 填写与服务器一致的密钥');  // 401 = 密钥没对上
+        if (!pushRes.ok) throw new Error('上传失败，服务器返回 ' + pushRes.status);  // 其他服务器错误
         pushed = local.length;                                  // 记录条数
       }
       /* 第二步：从服务器拉取别人的新变化 */
-      var pullRes = await fetch(this.state.url + '/api/pull?since=' + this.state.lastSync + '&device=' + encodeURIComponent(this.state.device), { headers: this.authHeaders() });  // 拉取接口
-      if (!pullRes.ok) throw new Error('下载失败，服务器返回 ' + pullRes.status);  // 服务器报错
+      var pullRes = await fetchWithTimeout(this.state.url + '/api/pull?since=' + this.state.lastSync + '&device=' + encodeURIComponent(this.state.device), { headers: this.authHeaders() });  // 拉取接口（带 30 秒超时）
+      if (pullRes.status === 401) throw new Error('同步密钥不正确：这台服务器要求同步密钥，请到 系统设置 → 多端同步 填写与服务器一致的密钥');  // 401 = 密钥没对上
+      if (!pullRes.ok) throw new Error('下载失败，服务器返回 ' + pullRes.status);  // 其他服务器错误
       var data = await pullRes.json();                          // { serverTime, changes, serverEmpty }
       var pulled = await this.applyServerChanges(data.changes || []);  // 应用到本机
       /* 服务器报"空库"（刚部署 / 免费云主机磁盘被重置）而本机有数据时，
@@ -207,7 +245,7 @@ var Sync = {
       if (data.serverEmpty) {
         var seed = await this.collectLocalChanges(0);           // 全量收集（不过滤时间）
         if (seed.length > 0) {                                  // 本机有数据才补种
-          var seedRes = await fetch(this.state.url + '/api/push', {  // 全量推送
+          var seedRes = await fetchWithTimeout(this.state.url + '/api/push', {  // 全量推送（带 30 秒超时）
             method: 'POST',                                     // POST 方式
             headers: this.authHeaders(),                        // 含同步密钥
             body: JSON.stringify({ device: this.state.device, changes: seed })  // 全部数据
@@ -292,34 +330,64 @@ var Sync = {
 /* main.js 的顶栏里放了 <span id="net-state">，这里负责画内容 */
 
 function updateNetState() {
-  var el = document.getElementById('net-state');                 // 顶栏容器
-  if (!el) return;                                               // 还没渲染就先跳过
   var s = (typeof Sync !== 'undefined') ? Sync.state : null;     // 同步状态
-  var html = '';                                                 // 要画的内容
-  var cls = 'net-state';                                         // 样式类
-  if (!s || !s.enabled) {                                        // 没启用同步（单机使用）
-    el.style.display = '';                                       // 照常显示，别再藏起来了
-    el.className = 'net-state ns-on';                            // 绿色 = 状态正常
-    el.title = '数据保存在本机浏览器；联网后可在【系统设置 → 多端同步】开启云端同步';
-    el.innerHTML = ICONS.wifi + '<span>本地模式</span>';          // 明确告诉用户数据存在哪
-    return;
+  var el = document.getElementById('net-state');                 // 顶栏容器（登录后才存在）
+  var lg = document.getElementById('login-sync');                // 登录页的同步提示条（登录前存在）
+
+  /* ---- 1) 登录后的顶栏小图标 ---- */
+  if (el) {
+    var html = '';                                               // 要画的内容
+    var cls = 'net-state';                                       // 样式类
+    if (!s || !s.enabled) {                                      // 没启用同步（单机使用）
+      el.style.display = '';                                     // 照常显示，别再藏起来了
+      el.className = 'net-state ns-on';                          // 绿色 = 状态正常
+      el.title = '数据保存在本机浏览器；联网后可在【系统设置 → 多端同步】开启云端同步';
+      el.innerHTML = ICONS.wifi + '<span>本地模式</span>';        // 明确告诉用户数据存在哪
+    } else {
+      el.style.display = '';                                     // 启用了就显示
+      if (s.syncing) {                                           // 正在同步
+        cls += ' ns-busy';                                       // 蓝色 + 转圈动画
+        html = ICONS.refresh + '<span>同步中</span>';
+      } else if (!navigator.onLine) {                            // 断网
+        cls += ' ns-off';                                        // 灰色
+        html = ICONS.wifi + '<span>离线模式</span>';              // 数据照常记，联网自动补传
+      } else if (s.lastError) {                                  // 有网但同步失败
+        cls += ' ns-err';                                        // 橙色警告
+        html = ICONS.cloud + '<span title="' + escapeHtml(s.lastError) + '">同步异常</span>';
+      } else {                                                   // 一切正常
+        cls += ' ns-on';                                         // 绿色
+        html = ICONS.cloud + '<span>已同步</span>';
+      }
+      el.className = cls;                                        // 应用样式类
+      el.innerHTML = html;                                       // 画内容
+    }
   }
-  el.style.display = '';                                         // 启用了就显示
-  if (s.syncing) {                                               // 正在同步
-    cls += ' ns-busy';                                           // 蓝色 + 转圈动画
-    html = ICONS.refresh + '<span>同步中</span>';
-  } else if (!navigator.onLine) {                                // 断网
-    cls += ' ns-off';                                            // 灰色
-    html = ICONS.wifi + '<span>离线模式</span>';                  // 数据照常记，联网自动补传
-  } else if (s.lastError) {                                      // 有网但同步失败
-    cls += ' ns-err';                                            // 橙色警告
-    html = ICONS.cloud + '<span title="' + escapeHtml(s.lastError) + '">同步异常</span>';
-  } else {                                                       // 一切正常
-    cls += ' ns-on';                                             // 绿色
-    html = ICONS.cloud + '<span>已同步</span>';
+
+  /* ---- 2) 登录页的同步提示条 ----
+     同步引擎在登录页就已经启动（见 main.js 初始化第 6 步），成员账号正是靠它从服务器拉下来的。
+     不把状态显示出来，用户就会以为"必须先登 admin 才能同步"，白跑一趟。 */
+  if (lg) {
+    var lc = 'login-sync';                                       // 样式类
+    var lt = '';                                                 // 要显示的文字
+    if (!s || !s.enabled) {                                      // 没启用同步：只能本地模式
+      lc += ' ls-warn';
+      lt = '本地模式：账号只存在本机。想用协会统一账号，请管理员先开启多端同步';
+    } else if (s.syncing) {                                      // 正在同步
+      lc += ' ls-busy';
+      lt = '正在从服务器同步数据（含账号），请稍等几秒…';
+    } else if (!navigator.onLine) {                              // 断网
+      lc += ' ls-warn';
+      lt = '当前离线：拿不到服务器上的账号，请连上网络后刷新本页';
+    } else if (s.lastError) {                                    // 同步失败：把原因直接摆出来
+      lc += ' ls-err';
+      lt = '同步失败：' + s.lastError;
+    } else {                                                     // 一切正常
+      lc += ' ls-on';
+      lt = '已同步（服务器：' + (s.url || '未知') + '）。第一次使用的话，现在就能用自己的账号登录';
+    }
+    lg.className = lc;                                           // 应用样式类
+    lg.textContent = lt;                                         // 写文字
   }
-  el.className = cls;                                            // 应用样式类
-  el.innerHTML = html;                                           // 画内容
 }
 
 /* ==================== 3. 同步后的智能刷新 ==================== */
