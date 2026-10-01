@@ -5,6 +5,12 @@
    冲突规则：同一条数据（同 store + id），谁的 updatedAt（没有就用
    createdAt）更新谁赢，和原来的 server.js 完全一致。
    请求体格式：{ device, changes: [{ store, id, data }, ...] }
+
+   性能注意：这里刻意"先一次性读全表，再批量写入"。
+   早期版本是每条数据都单独查一次、写一次（1 条 = 2 次数据库往返），
+   几百条就是上千次串行往返，光网络延迟就要十几秒，会直接撞上客户端
+   30 秒的同步超时 —— 表现就是"同步特别久，然后提示同步异常"。
+   改成现在这样以后，往返次数从上千次降到个位数。
    ============================================================ */
 
 import { json, SYNC_STORES } from '../_shared.js';
@@ -26,8 +32,24 @@ export async function onRequest(context) {
 
   var changes = (body && body.changes) || [];                // 要合并的变化列表
   var accepted = 0;                                          // 实际采纳的条数
+  var now = Date.now();                                      // 本次请求统一用这个服务器时间当 rev
 
-  /* 3. 逐条合并 */
+  /* 3. 一次性把服务器现有的行读出来，建立索引：key → { t, data }
+     这样每条数据都不用再单独查一次数据库（原来最耗时的就是这一步）。 */
+  var existing = {};                                         // 服务器现有行的索引
+  var allRows = await env.DB.prepare('SELECT store, id, data FROM sync_rows').all();  // 一次读全表
+  var list = (allRows && allRows.results) || [];             // 结果数组
+  for (var r = 0; r < list.length; r++) {                    // 逐行建索引
+    var rowData = {};                                        // 解析出来的内容
+    try { rowData = JSON.parse(list[r].data) || {}; } catch (e) { rowData = {}; }  // 历史脏数据读不出来就当空对象
+    existing[list[r].store + '\u0000' + String(list[r].id)] = {                     // 记入索引
+      t: rowData.updatedAt || rowData.createdAt || 0,         // 这一行在服务器上的改动时间
+      data: rowData                                            // 解析后的内容（全量快照模式要用）
+    };
+  }
+
+  /* 4. 逐条合并：把要写的 SQL 攒进数组，最后一次性批量提交 */
+  var stmts = [];                                            // 待执行的 SQL 语句
   for (var i = 0; i < changes.length; i++) {
     var ch = changes[i];
 
@@ -35,36 +57,22 @@ export async function onRequest(context) {
     if (SYNC_STORES.indexOf(ch.store) < 0) continue;
     if (!ch.id || !ch.data) continue;
 
-    /* 新数据的改动时间 */
-    var newT = ch.data.updatedAt || ch.data.createdAt || 0;
-
-    /* 查服务器上已有的同一条（可能不存在） */
-    var oldRow = await env.DB.prepare(
-      'SELECT data FROM sync_rows WHERE store = ? AND id = ?'
-    ).bind(ch.store, String(ch.id)).first();
-
-    /* 旧数据的改动时间；没有旧数据就记 -1（表示"必收录"） */
-    var oldT = -1;
-    if (oldRow) {
-      try {
-        var oldData = JSON.parse(oldRow.data);
-        oldT = oldData.updatedAt || oldData.createdAt || 0;
-      } catch (e) { /* 历史脏数据读不出来就当没有 */ }
-    }
+    var newT = ch.data.updatedAt || ch.data.createdAt || 0;   // 新数据的改动时间
+    var hit = existing[ch.store + '\u0000' + String(ch.id)];  // 服务器上已有的同一条（可能不存在）
+    var oldT = hit ? hit.t : -1;                              // 没有旧数据就记 -1（表示"必收录"）
 
     /* 新的 >= 旧的才采纳（含完全相同，用于补种） */
     if (newT >= oldT) {
-      var rev = Date.now();                                  // 用服务器时间当"收到时间"
       /* 有就更新、没有就插入（SQLite 的 UPSERT 写法） */
-      await env.DB.prepare(
+      stmts.push(env.DB.prepare(
         'INSERT INTO sync_rows (store, id, data, rev) VALUES (?, ?, ?, ?) ' +
         'ON CONFLICT(store, id) DO UPDATE SET data = excluded.data, rev = excluded.rev'
-      ).bind(ch.store, String(ch.id), JSON.stringify(ch.data), rev).run();
+      ).bind(ch.store, String(ch.id), JSON.stringify(ch.data), now));
       accepted++;
     }
   }
 
-  /* 4. 全量快照模式（请求体带 full: true）
+  /* 5. 全量快照模式（请求体带 full: true）
      把服务器上"本次没上传的行"统一打成删除墓碑。
      为什么需要它：数据在多端之间已经不一致时（早期版本的清空/初始化是真删，
      别的设备根本不知道要删），那些旧行会永远留在服务器和其他设备上 ——
@@ -80,24 +88,25 @@ export async function onRequest(context) {
       if (!changes[j].id) continue;                             // 没有主键的忽略
       keep[changes[j].store + '\u0000' + String(changes[j].id)] = true;  // 记下"要保留"
     }
-    var now = Date.now();                                      // 统一用服务器时间，避免各端时钟不一致
-    var allRows = await env.DB.prepare('SELECT store, id, data FROM sync_rows').all();  // 服务器现有全部行
-    var list = (allRows && allRows.results) || [];             // 结果数组
-    for (var k = 0; k < list.length; k++) {                    // 逐行检查
-      var row = list[k];                                       // 当前行
-      if (SYNC_STORES.indexOf(row.store) < 0) continue;         // 白名单外的不管
-      if (row.store === 'settings') continue;                   // 分类树不参与整体清理，避免把各端的物料分类清空
-      if (keep[row.store + '\u0000' + String(row.id)]) continue;  // 快照里有这一行：保留
-      var d = {};                                              // 解析原有内容
-      try { d = JSON.parse(row.data) || {}; } catch (e) { d = {}; }  // 历史脏数据读不出来就当空对象
-      if (d.deleted) continue;                                  // 已经是墓碑了，跳过
-      d.deleted = true;                                         // 打上删除墓碑
-      d.updatedAt = now;                                        // 时间用服务器时间，保证盖过各端本地的时间戳
-      await env.DB.prepare(                                     // 更新这一行
+    for (var key in existing) {                                // 遍历服务器上现有的每一行
+      if (!Object.prototype.hasOwnProperty.call(existing, key)) continue;  // 只看自己的属性
+      var store = key.split('\u0000')[0];                      // 还原表名
+      if (SYNC_STORES.indexOf(store) < 0) continue;             // 白名单外的不管
+      if (store === 'settings') continue;                       // 分类树不参与整体清理，避免把各端的物料分类清空
+      if (keep[key]) continue;                                  // 快照里有这一行：保留
+      if (existing[key].data.deleted) continue;                  // 已经是墓碑了，跳过
+      existing[key].data.deleted = true;                         // 打上删除墓碑
+      existing[key].data.updatedAt = now;                        // 时间用服务器时间，保证盖过各端本地的时间戳
+      stmts.push(env.DB.prepare(                                 // 更新这一行
         'UPDATE sync_rows SET data = ?, rev = ? WHERE store = ? AND id = ?'
-      ).bind(JSON.stringify(d), now, row.store, String(row.id)).run();
-      tombstoned++;                                             // 计数
+      ).bind(JSON.stringify(existing[key].data), now, store, key.split('\u0000')[1]));
+      tombstoned++;                                              // 计数
     }
+  }
+
+  /* 6. 分批提交：每 100 条一组，避免一次塞太多语句 */
+  for (var b = 0; b < stmts.length; b += 100) {
+    await env.DB.batch(stmts.slice(b, b + 100));
   }
 
   return json({ ok: true, accepted: accepted, tombstoned: tombstoned, serverTime: Date.now() });
