@@ -508,6 +508,30 @@ var Auth = {
     sessionStorage.removeItem('hwms_session');                  // 清会话保存
   },
 
+  /* 校验当前登录的账号是否还有效（还存在、没被删除、没被停用）。
+     为什么需要：管理员删掉或停用某个账号后，被删的人自己那台设备上，
+     内存里的 Auth.user 还是登录时的旧对象，而权限判断（Auth.can）读的正是它 ——
+     所以他在同一次会话里还能继续出入库、照样登记。每次同步完都校验一遍，
+     一旦失效立刻把他踢下线。 */
+  verifyStillValid: async function () {
+    if (!this.user) return true;                               // 本来就没登录，不用管
+    if (this._kicking) return false;                           // 已经在踢了，别再重复触发
+    var fresh = await DB.get('users', this.user.id);            // 从本地库重新读一次最新状态
+    if (!fresh || fresh.deleted) { await this.kickOut('你的账号已被管理员删除，已自动退出登录'); return false; }  // 账号被删除
+    if (!fresh.active) { await this.kickOut('你的账号已被管理员停用，已自动退出登录'); return false; }            // 账号被停用
+    this.user = fresh;                                          // 账号有效：顺带同步最新资料（角色/班级的改动也能立刻生效）
+    return true;                                                // 校验通过
+  },
+
+  /* 强制下线：清掉会话、提示原因，然后回到登录页 */
+  kickOut: async function (reason) {
+    if (this._kicking) return;                                  // 只执行一次，避免同步定时器反复触发
+    this._kicking = true;                                       // 上锁
+    this.logout();                                              // 清掉登录态和本地会话
+    if (typeof toast === 'function') toast(reason, 'err');        // 告诉用户为什么被踢出来
+    setTimeout(function () { location.reload(); }, 1800);        // 留 1.8 秒让他看清提示，再刷新回登录页
+  },
+
   /**
    * 权限判断：Auth.can('manage')
    * view=查询 / stock=出入库 / export=导出 / ai=智能配料 / stats=统计

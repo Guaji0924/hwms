@@ -227,6 +227,12 @@ var Sync = {
       if (!pullRes.ok) throw new Error('下载失败，服务器返回 ' + pullRes.status);  // 其他服务器错误
       var data = await pullRes.json();                          // { serverTime, changes, serverEmpty }
       var pulled = await this.applyServerChanges(data.changes || []);  // 应用到本机
+      /* 每轮同步都校验一次：当前登录的账号是不是还有效。
+         管理员刚把这个人删掉或停用了，他这台设备的内存里还留着旧的登录态，
+         不校验的话他还能继续出入库、照样登记 —— 这里发现失效就立刻踢下线。 */
+      if (!(await Auth.verifyStillValid())) {                    // 账号已被删除或停用
+        return { pushed: pushed, pulled: pulled, kicked: true };  // 结束本轮（页面马上会刷新回登录页）
+      }
       /* 服务器报"空库"（刚部署 / 免费云主机磁盘被重置）而本机有数据时，
          自动把本机全部数据重新上传一遍帮服务器恢复 —— 数据不会因为云主机重启而丢 */
       if (data.serverEmpty) {
