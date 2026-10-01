@@ -2,7 +2,7 @@
   "name": "物料管家 - 智能控制协会",
   "short_name": "物料管家",
   "description": "电子协会物料管理系统：登记、出入库、项目配料（AI / 嘉立创 BOM）、拍照识别、多端同步、离线可用",
-  "start_url": "./index.html",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f5f6fa",

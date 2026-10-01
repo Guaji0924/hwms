@@ -67,8 +67,24 @@
        双击 file:// 直接打开时跳过——单机离线版本来就不依赖网络，不受影响。 */
     if ('serviceWorker' in navigator &&
         (location.protocol === 'https:' || location.protocol === 'http:')) {
+      /* 先判断是不是"安全上下文"：Service Worker 只在 https:// 或 localhost 下能注册。
+         局域网 http://192.168.x.x 装的应用之所以断网打不开，就是卡在这一步 ——
+         这里把原因明确打到控制台，别再静默失败。 */
+      if (!window.isSecureContext) {
+        console.warn('[SW] 离线缓存未启用：当前不是安全上下文。'
+          + 'Service Worker 只能在 https:// 或 localhost 下注册；'
+          + '局域网 http://IP 地址访问时浏览器会拒绝，因此断网无法打开。'
+          + '想离线可用，请用 https 网址（如 Cloudflare Pages）访问。');
+      }
       navigator.serviceWorker.register('./sw.js')
-        .catch(function () { /* 注册失败（如浏览器不支持）不影响正常使用 */ });
+        .then(function () {
+          console.info('[SW] 离线缓存已注册，断网后仍可打开本页。');
+        })
+        .catch(function (err) {
+          /* 注册失败不影响在线使用，但会让"断网打开"失效，所以必须让人看得见 */
+          console.warn('[SW] 离线缓存注册失败，断网将无法打开本页：',
+            (err && err.message) ? err.message : err);
+        });
       /* 新版本 Service Worker 接管后自动刷新一次。
          否则老设备会一直吃缓存里的旧文件（得手动刷两次才换新），
          改过的界面就"看不见"了。 */
