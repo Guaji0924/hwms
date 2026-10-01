@@ -35,7 +35,7 @@ export async function onRequest(context) {
   var cors = isAllowed ? {
     'Access-Control-Allow-Origin': origin,                     // 只许可命中的那一个来源
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',      // 允许的方法
-    'Access-Control-Allow-Headers': 'Content-Type, x-sync-key'  // 允许的自定义头（含同步密钥）
+    'Access-Control-Allow-Headers': 'Content-Type'              // 允许的自定义头
   } : {};
 
   /* 浏览器发的预检请求（OPTIONS）：白名单内的放行，白名单外的直接拒绝 */

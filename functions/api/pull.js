@@ -7,30 +7,26 @@
    让客户端决定要不要把本机数据全量补传回来（数据自愈）。
    ============================================================ */
 
-import { json, checkKey } from '../_shared.js';
+import { json } from '../_shared.js';
 
 export async function onRequest(context) {
-  /* 1. 密钥校验（设了密钥才需要） */
-  var denied = checkKey(context.request, context.env);
-  if (denied) return denied;
-
-  /* 2. 解析 since 参数：客户端的上次同步水位 */
+  /* 1. 解析 since 参数：客户端的上次同步水位 */
   var url = new URL(context.request.url);
   var since = parseInt(url.searchParams.get('since'), 10) || 0;
 
-  /* 3. 查出所有 rev > since 的数据，按时间从旧到新排序 */
+  /* 2. 查出所有 rev > since 的数据，按时间从旧到新排序 */
   var rows = await context.env.DB.prepare(
     'SELECT store, id, data FROM sync_rows WHERE rev > ? ORDER BY rev ASC'
   ).bind(since).all();
 
-  /* 4. 把每一行还原成前端认识的样子（data 是 JSON 字符串，要解开） */
+  /* 3. 把每一行还原成前端认识的样子（data 是 JSON 字符串，要解开） */
   var changes = [];
   for (var i = 0; i < rows.results.length; i++) {
     var row = rows.results[i];
     changes.push({ store: row.store, id: row.id, data: JSON.parse(row.data) });
   }
 
-  /* 5. 统计一共存了多少条数据，0 条 = 空库 */
+  /* 4. 统计一共存了多少条数据，0 条 = 空库 */
   var count = await context.env.DB.prepare('SELECT COUNT(*) AS n FROM sync_rows').first();
 
   return json({

@@ -22,21 +22,3 @@ export function json(obj, status) {
   });
 }
 
-/* 同步密钥校验：返回 null 表示"通过"，返回一个 401 响应表示"拒绝"
-   规则和 server.js 一样：服务器没设 SYNC_KEY 就不校验（谁都能用）；
-   设了就必须带上正确的 x-sync-key 请求头才放行。
-   比较用的是时序安全比较（crypto.subtle.timingSafeEqual，
-   Cloudflare Workers 提供的非标准扩展），逐字节比较耗时一致，
-   防止攻击者根据"比较快慢"一点点猜出密钥内容。 */
-export function checkKey(request, env) {
-  if (!env.SYNC_KEY) return null;                            // 没设密钥 → 不校验
-  var given = request.headers.get('x-sync-key') || '';        // 客户端带来的密钥
-  var expected = env.SYNC_KEY;                               // 服务器配置的密钥
-  if (given.length !== expected.length) {                    // 长度先比（timingSafeEqual 要求两边等长，长度不等没有可比性）
-    return json({ ok: false, message: '同步密钥不正确' }, 401);
-  }
-  var a = new TextEncoder().encode(given);                   // 转成字节数组再比
-  var b = new TextEncoder().encode(expected);
-  if (crypto.subtle.timingSafeEqual(a, b)) return null;      // 逐字节等时比较 → 密钥对 → 放行
-  return json({ ok: false, message: '同步密钥不正确' }, 401);  // 密钥错 → 拒绝
-}

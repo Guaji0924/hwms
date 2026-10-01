@@ -428,10 +428,18 @@ var Auth = {
       var salt = uid('salt');                                 // 随机盐
       var hash = await hashPassword('202306ZNKZXH.2026admin-lgj', salt);        // 默认密码 202306ZNKZXH.2026admin-lgj 的哈希
       await DB.put('users', {                                 // 创建默认管理员
-        id: uid('user'), username: 'admin', passwordHash: hash, salt: salt,   // 账号信息
+        /* id 故意写死、不随机：每台新设备第一次打开都会执行到这里，
+           如果 id 随机，同步之后服务器上就会堆出好几个同名的 admin。
+           固定 id 让所有设备的"兜底管理员"始终是同一条记录。 */
+        id: 'user_bootstrap_admin',
+        username: 'admin', passwordHash: hash, salt: salt,     // 账号信息
         role: 'admin',                                        // 角色：管理员
         active: true,                                         // 启用状态
         createdAt: Date.now(),                                 // 创建时间
+        /* updatedAt 故意给一个极小值（1）：同步的冲突规则是"改动时间新的赢"。
+           这样协会真机上那个管理员（改过密码等，updatedAt 很新）永远优先，
+           新设备刚生成的兜底账号不会把管理员密码覆盖回默认值。 */
+        updatedAt: 1,
         lastLogin: null                                       // 最近登录
       });
     }
@@ -450,9 +458,14 @@ var Auth = {
   login: async function (username, pwd, remember) {
     var users = await DB.all('users');                        // 取全部用户
     var u = null;                                             // 找到的用户
+    /* 同名账号可能不止一个：每台新设备第一次打开都会自动建一个兜底 admin，
+       同步之后这些同名账号会汇总到一起。这里固定取"创建时间最早"的那个，
+       也就是协会真正在用的原始账号，避免被后来自动生成的兜底账号顶掉。 */
     for (var i = 0; i < users.length; i++) {                  // 遍历比对
       if (users[i].deleted) continue;                         // 已删除（墓碑）的账号不能登录
-      if (users[i].username === username) { u = users[i]; break; }  // 用户名匹配
+      if (users[i].username !== username) continue;           // 用户名不匹配就跳过
+      if (!u) { u = users[i]; continue; }                     // 第一个候选先记下
+      if ((users[i].createdAt || 0) < (u.createdAt || 0)) u = users[i];  // 创建更早的胜出
     }
     if (!u) return { ok: false, msg: '用户不存在' };          // 没找到
     if (!u.active) return { ok: false, msg: '账号已被停用，请联系管理员' };  // 被禁用

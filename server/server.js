@@ -20,10 +20,8 @@ var http = require('http');          // HTTP 服务器
 var fs = require('fs');              // 文件读写（静态文件 + 数据文件）
 var path = require('path');          // 路径处理
 var os = require('os');              // 读本机 IP 用
-var crypto = require('crypto');      // 加密工具（时序安全比较密钥用）
 
 var PORT = process.env.PORT || 8787;                     // 端口（云平台自动分配 / 本机默认 8787）
-var SYNC_KEY = process.env.SYNC_KEY || '';               // 同步密钥（云端部署强烈建议设置，防止陌生人读写数据）
 var DATA_FILE = path.join(__dirname, 'data.json');       // 数据文件位置
 var CONFIG_FILE = path.join(__dirname, 'sync-config.json'); // 同步配置文件位置（admin 在前端改的）
 var WEB_ROOT = path.join(__dirname, '..');               // 网站根目录 = 上一级（hwms 文件夹）
@@ -117,8 +115,7 @@ function totalRows() {
 /* 内存中的同步配置（启动时从文件恢复，运行时 admin 可改） */
 var syncConfig = {
   enabled: true,                                             // 默认开启同步
-  url: '',                                                 // 留空 = 自动用当前域名
-  key: SYNC_KEY                                            // 默认用环境变量的密钥
+  url: ''                                                  // 留空 = 自动用当前域名
 };
 
 /* 启动时读取同步配置文件 */
@@ -129,7 +126,6 @@ function loadSyncConfig() {
     if (obj && typeof obj === 'object') {
       syncConfig.enabled = obj.enabled !== false;             // 默认 true
       syncConfig.url = obj.url || '';                         // 留空 = 自动
-      syncConfig.key = obj.key || SYNC_KEY || '';             // 优先用文件里的，没有就用环境变量
     }
     console.log('[启动] 已从 sync-config.json 恢复同步配置');
   } catch (e) {
@@ -144,17 +140,6 @@ function saveSyncConfig() {
   } catch (e) {
     console.error('[保存同步配置失败]', e.message);
   }
-}
-
-/* 校验 admin token：简单校验，从请求头里取 x-admin-token */
-function adminOk(req, res) {
-  var token = req.headers['x-admin-token'] || '';
-  /* 简单规则：token 就是 SYNC_KEY 的 md5 前 8 位，或者 SYNC_KEY 本身 */
-  var expected = SYNC_KEY ? crypto.createHash('md5').update(SYNC_KEY).digest('hex').slice(0, 8) : '';
-  if (!SYNC_KEY) return true;                               // 没设密钥 = 不校验（局域网自用）
-  if (token === expected || token === SYNC_KEY) return true;
-  sendJson(res, 403, { ok: false, message: '权限不足' });
-  return false;
 }
 
 /* ==================== 4. HTTP 服务 ==================== */
@@ -244,44 +229,27 @@ var server = http.createServer(function (req, res) {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, x-sync-key'  // 必须含 x-sync-key，否则跨域客户端带密钥时预检通不过
+      'Access-Control-Allow-Headers': 'Content-Type'           // 允许的自定义请求头
     });
     return res.end();
   }
 
   /* ---- 同步接口 ---- */
-  /* 密钥校验：服务器设置了 SYNC_KEY 环境变量后，推送/拉取必须带上正确的 x-sync-key 头。
-     用 crypto.timingSafeEqual 做时序安全比较（逐字节耗时一致），
-     防止攻击者根据"比较快慢"一点点猜出密钥内容 */
-  function keyOk() {
-    if (!SYNC_KEY) return true;                             // 没设密钥 = 不校验（局域网自用）
-    var given = req.headers['x-sync-key'] || '';            // 客户端带来的密钥（可能没带）
-    if (given.length === SYNC_KEY.length &&                // 长度相等才比（timingSafeEqual 要求等长）
-        crypto.timingSafeEqual(Buffer.from(given), Buffer.from(SYNC_KEY))) return true;  // 逐字节等时比较 → 密钥对 → 放行
-    sendJson(res, 401, { ok: false, message: '同步密钥不正确' });  // 密钥不对 → 拒绝
-    return false;
-  }
   if (urlPath === '/api/ping' && req.method === 'GET') {    // 探活：设置页"测试连接"用
-    return sendJson(res, 200, { ok: true, version: VERSION, serverTime: Date.now(), needKey: !!SYNC_KEY });  // needKey 告诉客户端服务器是否要求密钥
+    return sendJson(res, 200, { ok: true, version: VERSION, serverTime: Date.now() });  // 报告服务器状态
   }
   if (urlPath === '/api/sync-config' && req.method === 'GET') {  // 获取同步配置：成员打开网页时自动拉取
     return sendJson(res, 200, {
       ok: true,
       enabled: syncConfig.enabled,
-      url: syncConfig.url,                                   // 留空表示"用当前域名"
-      /* 这里绝不能下发掩码 '***'：前端会把它当成真密钥发回来，服务器一比对就 401。
-         密钥请统一写在 js/sync.js 顶部的 SYNC_DEFAULT.key 里（或各设备在设置页自行填写） */
-      key: '',
-      needKey: !!SYNC_KEY                                    // 告诉前端"本服务器要求密钥"，便于给出准确提示
+      url: syncConfig.url                                    // 留空表示"用当前域名"
     });
   }
   if (urlPath === '/api/sync-config' && req.method === 'POST') {  // 保存同步配置：admin 在前端设置页修改
-    if (!adminOk(req, res)) return;                         // 鉴权
     readBody(req).then(function (body) {
       if (body && typeof body === 'object') {
         syncConfig.enabled = body.enabled !== false;          // 默认 true
         syncConfig.url = (body.url || '').trim();           // 去空格
-        syncConfig.key = (body.key || '').trim();           // 去空格
         saveSyncConfig();                                   // 持久化
       }
       return sendJson(res, 200, { ok: true, config: syncConfig });
@@ -291,13 +259,11 @@ var server = http.createServer(function (req, res) {
     return;
   }
   if (urlPath === '/api/pull' && req.method === 'GET') {    // 拉取：客户端下载新变化
-    if (!keyOk()) return;                                   // 密钥不对拒收
     var since = parseInt(query.since, 10) || 0;             // 客户端水位
     var changes = handlePull(since);                        // 收集要下发的
     return sendJson(res, 200, { ok: true, serverTime: Date.now(), changes: changes, serverEmpty: totalRows() === 0 });  // serverEmpty 供客户端判断要不要补种数据
   }
   if (urlPath === '/api/push' && req.method === 'POST') {   // 推送：客户端上传自己的变化
-    if (!keyOk()) return;                                   // 密钥不对拒收
     readBody(req).then(function (body) {                    // 读请求体
       var accepted = handlePush(body);                      // 合并进内存库
       sendJson(res, 200, { ok: true, accepted: accepted, serverTime: Date.now() });  // 应答
@@ -329,7 +295,6 @@ server.listen(PORT, '0.0.0.0', function () {                // 监听所有网�
     });
   }
   console.log('  数据文件：  ' + DATA_FILE);
-  console.log('  同步密钥：  ' + (SYNC_KEY ? '已启用（请求需带正确的 x-sync-key）' : '未设置（局域网自用可不设；云端部署建议设置 SYNC_KEY 环境变量）'));
   console.log('  关闭服务器：直接关掉本窗口（数据已自动保存）');
   console.log('==============================================');
 });

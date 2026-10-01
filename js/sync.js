@@ -21,12 +21,7 @@
    成员仍可在「系统设置 → 多端同步」里单独改，改过之后优先用他自己填的。 */
 var SYNC_DEFAULT = {
   enabled: true,     // 默认就开启多端同步（填 false 则默认不开，需要各自手动开启）
-  url: '',           // 服务器地址：留空 = 自动用"网页自己的地址"
-  /* ★ 同步密钥（最容易踩坑的一行）★
-     服务器端设了 SYNC_KEY（Cloudflare 环境变量 / server.js 环境变量）时，
-     必须把同一串密钥填在下面，否则手机等没填过密钥的设备会一直返回 401 同步失败。
-     密钥不会由服务器自动下发（下发就等于公开，锁就白上了），只能写在这里或各设备手动填。 */
-  key: ''
+  url: ''            // 服务器地址：留空 = 自动用"网页自己的地址"
 };
 
 /* 取"网页自己的地址"：只有通过 http / https 打开才有意义（双击本地文件没有服务器） */
@@ -68,11 +63,7 @@ async function fetchServerConfig() {
     if (!data || !data.ok) return null;                          // 服务器返回错误
     return {
       enabled: data.enabled !== false,                           // 默认 true
-      url: data.url || '',                                       // 服务器指定的地址（留空 = 用当前域名）
-      /* '***' 是服务器用来"掩码显示"的占位符，绝不能当成真密钥拿去请求，
-         否则客户端会带着 x-sync-key: *** 去同步，服务器一比对就返回 401 */
-      key: (data.key && data.key !== '***') ? data.key : '',
-      needKey: !!data.needKey                                    // 服务器是否要求密钥（用来提前给出提示）
+      url: data.url || ''                                        // 服务器指定的地址（留空 = 用当前域名）
     };
   } catch (e) {
     return null;                                                 // 网络错误、服务器未启动等
@@ -86,9 +77,7 @@ var Sync = {
   state: {
     enabled: false,          // 是否启用同步（默认取 SYNC_DEFAULT.enabled，成员可在设置页改）
     url: '',                 // 实际使用的服务器地址（已解析：成员自己填的 > 协会默认 > 网页自己的地址）
-    key: '',                 // 实际使用的同步密钥（已解析：成员自己填的 > 协会默认）
     userUrl: '',             // 成员自己在设置页填的地址（留空 = 用协会默认）
-    userKey: '',             // 成员自己在设置页填的密钥（留空 = 用协会默认）
     device: '',              // 本机设备名（方便在服务器日志里认账）
     lastSync: 0,             // 上次同步到的时间点（毫秒），下次只同步这之后的变化
     syncing: false,          // 正在同步中（防止重复跑）
@@ -100,14 +89,12 @@ var Sync = {
      settings 表特殊：只同步"物料分类树"，其余（AI 配置、同步配置等）留在本机 */
   STORES: ['materials', 'records', 'users', 'logs'],
 
-  /* ---------- 合成实际要用的地址与密钥 ----------
+  /* ---------- 合成实际要用的服务器地址 ----------
      优先级：成员自己填的 > 协会默认（SYNC_DEFAULT） > 网页自己的地址
      成员留空就自动跟随协会统一设置，不用自己填任何东西 */
-  resolve: function (userUrl, userKey) {
+  resolve: function (userUrl) {
     this.state.userUrl = userUrl || '';                                              // 记下成员自己填的地址（可能为空）
-    this.state.userKey = userKey || '';                                              // 记下成员自己填的密钥（可能为空）
     this.state.url = this.state.userUrl || SYNC_DEFAULT.url || syncOwnOrigin();      // 依次回退，取到第一个非空的
-    this.state.key = this.state.userKey || SYNC_DEFAULT.key || '';                   // 密钥同理
   },
 
   /* ---------- 启动：应用初始化时调用一次 ---------- */
@@ -121,20 +108,12 @@ var Sync = {
     if (serverCfg) {
       SYNC_DEFAULT.enabled = serverCfg.enabled;                  // 更新默认配置
       SYNC_DEFAULT.url = serverCfg.url;
-      SYNC_DEFAULT.key = serverCfg.key;
     }
 
     /* 开关：成员在设置页手动定过（enabledSet）就用他的，否则跟随服务器/协会默认 */
     this.state.enabled = (cfg && cfg.enabledSet) ? !!cfg.enabled : !!SYNC_DEFAULT.enabled;
-    this.resolve(cfg ? cfg.url : '', cfg ? cfg.key : '');       // 合成地址与密钥
+    this.resolve(cfg ? cfg.url : '');                           // 合成服务器地址
     if (!this.state.url) this.state.enabled = false;            // 拿不到服务器地址（如本地双击打开）→ 只能本地模式
-
-    /* 服务器明说"我要求密钥"，但本机一个密钥都没有：
-       提前把原因写进 lastError，登录页提示条立刻就能说清问题，
-       不用等一轮请求失败（401）才知道 */
-    if (serverCfg && serverCfg.needKey && !this.state.key) {
-      this.state.lastError = '服务器要求同步密钥，但本机没有：请管理员把密钥填进 js/sync.js 的 SYNC_DEFAULT.key，或取消服务器上的 SYNC_KEY';
-    }
 
     var self = this;                                            // 保存 this
     /* 浏览器"联网/断网"事件：网络一恢复就立刻同步一次 */
@@ -161,7 +140,7 @@ var Sync = {
     this.state.device = cfg.device || '';                       // 设备名
     this.state.lastSync = cfg.lastSync || 0;                    // 保留上次同步时间
     this.state.lastError = '';                                  // 清空旧错误
-    this.resolve(cfg.url, cfg.key);                             // 合成地址与密钥
+    this.resolve(cfg.url);                                      // 合成服务器地址
     if (!this.state.url) this.state.enabled = false;            // 没地址就没法同步，退回本地模式
     this.startTimer();                                          // 重启定时器
     updateNetState();                                           // 刷新顶栏
@@ -179,11 +158,9 @@ var Sync = {
     }, 8000);                                                   // 8 秒一轮
   },
 
-  /* ---------- 请求头：带上同步密钥（服务器设置过 SYNC_KEY 时必须匹配） ---------- */
+  /* ---------- 同步请求统一使用的请求头 ---------- */
   authHeaders: function () {
-    var h = { 'Content-Type': 'application/json' };             // 基础头
-    if (this.state.key) h['x-sync-key'] = this.state.key;       // 有密钥就带上
-    return h;
+    return { 'Content-Type': 'application/json' };              // 只声明 JSON 请求体
   },
 
   /* ---------- 收集本机待上传的变化 ----------
@@ -227,16 +204,16 @@ var Sync = {
       if (local.length > 0) {                                   // 有东西才推
         var pushRes = await fetchWithTimeout(this.state.url + '/api/push', {  // 推送接口（带 30 秒超时）
           method: 'POST',                                       // POST 方式
-          headers: this.authHeaders(),                          // JSON 体 + 同步密钥
+          headers: this.authHeaders(),                          // JSON 请求体
           body: JSON.stringify({ device: this.state.device, changes: local })  // 数据
         });
-        if (pushRes.status === 401) throw new Error('同步密钥不正确：这台服务器要求同步密钥，请到 系统设置 → 多端同步 填写与服务器一致的密钥');  // 401 = 密钥没对上
+        if (pushRes.status === 401) throw new Error('服务器拒绝访问（401）：请确认"同步服务器地址"是否正确');  // 401 = 服务器不接受这台设备
         if (!pushRes.ok) throw new Error('上传失败，服务器返回 ' + pushRes.status);  // 其他服务器错误
         pushed = local.length;                                  // 记录条数
       }
       /* 第二步：从服务器拉取别人的新变化 */
       var pullRes = await fetchWithTimeout(this.state.url + '/api/pull?since=' + this.state.lastSync + '&device=' + encodeURIComponent(this.state.device), { headers: this.authHeaders() });  // 拉取接口（带 30 秒超时）
-      if (pullRes.status === 401) throw new Error('同步密钥不正确：这台服务器要求同步密钥，请到 系统设置 → 多端同步 填写与服务器一致的密钥');  // 401 = 密钥没对上
+      if (pullRes.status === 401) throw new Error('服务器拒绝访问（401）：请确认"同步服务器地址"是否正确');  // 401 = 服务器不接受这台设备
       if (!pullRes.ok) throw new Error('下载失败，服务器返回 ' + pullRes.status);  // 其他服务器错误
       var data = await pullRes.json();                          // { serverTime, changes, serverEmpty }
       var pulled = await this.applyServerChanges(data.changes || []);  // 应用到本机
@@ -247,7 +224,7 @@ var Sync = {
         if (seed.length > 0) {                                  // 本机有数据才补种
           var seedRes = await fetchWithTimeout(this.state.url + '/api/push', {  // 全量推送（带 30 秒超时）
             method: 'POST',                                     // POST 方式
-            headers: this.authHeaders(),                        // 含同步密钥
+            headers: this.authHeaders(),                        // JSON 请求体
             body: JSON.stringify({ device: this.state.device, changes: seed })  // 全部数据
           });
           if (!seedRes.ok) throw new Error('补传数据失败，服务器返回 ' + seedRes.status);  // 补种失败要报错
@@ -301,6 +278,13 @@ var Sync = {
       } else {                                                    // 正常数据
         if (ch.store === 'records') fixLegacyType(remote);        // 记录类数据顺手修正旧类型（out_use → out），防止旧类型从别的设备流回来
         await DB.put(ch.store, remote);                           // 直接覆盖本机（谁新谁赢）
+        /* 同步下来的正好是"当前登录的这个账号"：内存里的登录资料也一起换新。
+           这样在别的设备把角色改成管理员后，本机不用退出重登就能立刻生效。 */
+        if (ch.store === 'users' && typeof Auth !== 'undefined' && Auth.user && Auth.user.id === ch.id) {
+          var roleChanged = (Auth.user.role !== remote.role);      // 角色有没有变化
+          Auth.user = remote;                                      // 更新内存中的登录用户
+          if (roleChanged && typeof renderShell === 'function') renderShell();  // 角色变了：重画侧边栏和顶栏
+        }
       }
       if (ch.store === 'materials') matsChanged = true;           // 标记物料表变动
       applied++;                                                  // 计数
@@ -318,7 +302,6 @@ var Sync = {
       enabledSet: !!old.enabledSet,                              // 保留标记：成员没手动定过就继续跟随协会默认
       enabled: this.state.enabled,
       url: this.state.userUrl,                                   // 只存成员自己填的（留空 = 继续用协会默认/网页自己的地址）
-      key: this.state.userKey,                                   // 同上
       device: this.state.device,
       lastSync: this.state.lastSync
     };

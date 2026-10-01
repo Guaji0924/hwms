@@ -7,7 +7,7 @@
    请求体格式：{ device, changes: [{ store, id, data }, ...] }
    ============================================================ */
 
-import { json, checkKey, SYNC_STORES } from '../_shared.js';
+import { json, SYNC_STORES } from '../_shared.js';
 
 export async function onRequest(context) {
   var req = context.request;
@@ -16,11 +16,7 @@ export async function onRequest(context) {
   /* 1. 只收 POST */
   if (req.method !== 'POST') return json({ ok: false, message: '请用 POST 方式' }, 405);
 
-  /* 2. 密钥校验 */
-  var denied = checkKey(req, env);
-  if (denied) return denied;
-
-  /* 3. 读请求体（JSON） */
+  /* 2. 读请求体（JSON） */
   var body = {};
   try {
     body = await req.json();
@@ -31,7 +27,7 @@ export async function onRequest(context) {
   var changes = (body && body.changes) || [];                // 要合并的变化列表
   var accepted = 0;                                          // 实际采纳的条数
 
-  /* 4. 逐条合并 */
+  /* 3. 逐条合并 */
   for (var i = 0; i < changes.length; i++) {
     var ch = changes[i];
 

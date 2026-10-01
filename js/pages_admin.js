@@ -74,7 +74,12 @@ async function pageUsers() {
   $('#page').innerHTML =
     '<div class="page-head">' +
       '<div><div class="page-title">用户管理</div><div class="page-desc">管理员可以添加成员、临时授予物料管理权限</div></div>' +
-      '<button class="btn btn-primary" onclick="addUserModal()">' + ICONS.plus + '添加成员</button>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        /* 修复按钮：早期版本的改角色/改权限没盖同步时间戳，改动只留在本机没上传，
+           手机上登同一账号还是旧角色。点它可"以本机为准"重新上传全部账号。 */
+        '<button class="btn btn-outline" onclick="repairUserSync()">' + ICONS.refresh + '修复账号同步</button>' +
+        '<button class="btn btn-primary" onclick="addUserModal()">' + ICONS.plus + '添加成员</button>' +
+      '</div>' +
     '</div>' +
     /* 权限说明卡 */
     '<div class="card" style="padding:14px 18px">' +
@@ -102,6 +107,38 @@ async function pageUsers() {
     '</div>';
 }
 
+/* 修复账号同步：把本机当前的账号信息（角色 / 密码 / 班级 / 启用状态）重新盖上
+   "刚刚修改"的时间戳，然后立刻上传到服务器。
+   为什么需要它：早期版本的"改角色 / 改权限"忘记盖时间戳，改动只留在本机、
+   没上传，于是手机上登同一个账号还是旧角色（显示是成员）。点一次这个按钮，
+   以本机显示的信息为准重新覆盖服务器，其他设备随后会自动同步成一致。 */
+async function repairUserSync() {
+  if (!Auth.user || Auth.user.role !== 'admin') { toast('没有权限', 'err'); return; }   // 权限
+  var ok = await confirmBox('将以【本机当前显示的账号信息】为准，重新上传到服务器。\n\n' +
+    '请先确认本机用户列表里的角色、班级、启用状态都是正确的；\n' +
+    '上传后其他设备会自动同步成一样的。\n\n确定继续吗？');                                  // 确认（避免在错误的那台设备上误点）
+  if (!ok) return;                                                                        // 取消
+  var users = await DB.all('users');                                                       // 全部用户
+  var n = 0;                                                                                // 实际上传数量
+  for (var i = 0; i < users.length; i++) {                                                   // 逐个账号
+    if (users[i].deleted) continue;                                                           // 墓碑跳过
+    stampSync(users[i]);                                                                       // 盖上最新时间戳 → 这次上传一定赢过服务器上的旧记录
+    await DB.put('users', users[i]);                                                            // 写回本机
+    n++;                                                                                         // 计数
+  }
+  await Log.add('修复账号同步', '重新上传 ' + n + ' 个账号');                                     // 日志
+  toast('已重新上传 ' + n + ' 个账号，正在同步…', 'ok');                                           // 提示
+  if (typeof Sync !== 'undefined' && Sync.syncNow) {                                              // 立刻推一轮
+    try {
+      var r = await Sync.syncNow();                                                                // 执行同步
+      if (!r.busy) toast('同步完成：上传 ' + r.pushed + ' 条，下载 ' + r.pulled + ' 条', 'ok');      // 结果
+    } catch (e) {
+      toast('上传失败：' + e.message, 'err');                                                       // 失败提示
+    }
+  }
+  pageUsers();                                                                                        // 刷新列表
+}
+
 /* 添加成员弹窗 */
 function addUserModal() {
   openModal('添加成员', '' +
@@ -125,12 +162,14 @@ async function addUserSubmit() {
   }
   var salt = uid('salt');                                                    // 盐
   var hash = await hashPassword(pwd, salt);                                   // 哈希
-  await DB.put('users', {                                                     // 写库
+  var newUser = {                                                             // 新账号对象
     id: uid('user'), username: name, passwordHash: hash, salt: salt,           // 账号
     role: 'member', canManage: false, active: true, pwdChanged: false,           // 默认普通成员，初始密码未改
     cls: cls,                                                                    // 班级（可为空）
     createdAt: Date.now(), lastLogin: null
-  });
+  };
+  stampSync(newUser);                                                          // 盖同步时间戳（否则新成员账号不会同步到其他设备）
+  await DB.put('users', newUser);                                              // 写库
   await Log.add('添加成员', name);                                             // 日志
   closeModal();                                                                 // 关弹窗
   toast('成员已创建', 'ok');                                                      // 提示
@@ -170,6 +209,7 @@ async function toggleManage(userId) {
   for (var i = 0; i < users.length; i++) {                                             // 遍历
     if (users[i].id === userId) {                                                       // 命中
       users[i].canManage = !users[i].canManage;                                          // 翻转
+      stampSync(users[i]);                                                                // 盖同步时间戳（漏了它，这次改动就不会上传到其他设备）
       await DB.put('users', users[i]);                                                    // 写库
       await Log.add('修改权限', users[i].username + (users[i].canManage ? ' 获得管理权限' : ' 管理权限已收回'));  // 日志
       toast(users[i].username + (users[i].canManage ? ' 已获得物料管理权限' : ' 的管理权限已收回'), 'ok');  // 提示
@@ -198,6 +238,7 @@ async function toggleRole(userId) {
     if (!ok2) return;                                                                              // 取消
     target.role = 'admin';                                                                          // 升级
   }
+  stampSync(target);                                                                                  // 盖同步时间戳（漏了它，角色改动就不会同步到其他设备）
   await DB.put('users', target);                                                                     // 写库
   await Log.add('修改角色', target.username + ' 角色改为' + (target.role === 'admin' ? '管理员' : '成员'));  // 日志
   toast('角色已更新', 'ok');                                                                          // 提示
@@ -216,6 +257,7 @@ async function toggleUserActive(userId) {
         if (admins <= 1) { toast('至少要保留一个启用的管理员', 'err'); return; }                     // 不许
       }
       users[i].active = !users[i].active;                                                           // 翻转状态
+      stampSync(users[i]);                                                                            // 盖同步时间戳（漏了它，启用/停用不会同步到其他设备）
       await DB.put('users', users[i]);                                                               // 写库
       await Log.add(users[i].active ? '启用账号' : '停用账号', users[i].username);                     // 日志
       toast('已' + (users[i].active ? '启用' : '停用') + ' ' + users[i].username, 'ok');               // 提示
@@ -257,6 +299,7 @@ async function resetUserPwdSubmit(userId) {
     if (users[i].id === userId) {                                                              // 命中
       users[i].salt = uid('salt');                                                               // 换新盐
       users[i].passwordHash = await hashPassword(pwd, users[i].salt);                              // 新哈希
+      stampSync(users[i]);                                                                          // 盖同步时间戳（漏了它，重置后的密码不会同步到其他设备）
       await DB.put('users', users[i]);                                                             // 写库
       await Log.add('重置密码', users[i].username);                                                  // 日志
       closeModal();                                                                                  // 关
@@ -278,7 +321,6 @@ async function pageSettings() {
   var syncCfg = await DB.getSetting('syncConfig', {});                                                     // 本机保存的同步配置（从没配过是空对象）
   var syncOn = syncCfg.enabledSet ? !!syncCfg.enabled : !!SYNC_DEFAULT.enabled;                             // 实际开关：成员定过用他的，否则跟随协会默认
   var syncEffUrl = syncCfg.url || SYNC_DEFAULT.url || syncOwnOrigin();                                      // 实际使用的服务器地址（留空则自动取）
-  var syncEffKey = !!(syncCfg.key || SYNC_DEFAULT.key);                                                     // 实际是否已带密钥
   var theme = localStorage.getItem('hwms_theme') || 'light';                                   // 主题
   /* 分类管理表格 */
   var catRows = '';                                                                              // 行
@@ -297,7 +339,7 @@ async function pageSettings() {
     '<div class="card">' +
       '<div class="card-title">' + ICONS.cloud + '多端同步（手机 / 平板 / 电脑共用一份数据）</div>' +
       '<div class="ai-quote" style="margin-bottom:10px"><b>已按协会统一设置好，通常不用动</b><br>' +
-      '系统默认就开启同步，服务器地址自动取<b>网页自己的地址</b>' + (syncEffKey ? '，密钥也已内置' : '') + '，所以成员打开网页就自动连上，不需要填任何东西。' +
+      '系统默认就开启同步，服务器地址自动取<b>网页自己的地址</b>，所以成员打开网页就自动连上，不需要填任何东西。' +
       '只有想单独用别的服务器时，才在下面改。部署后端见 <b>开发文档.md → 十九、部署 B</b>。</div>' +
       '<div class="form-item"><label><input type="checkbox" id="sync-enabled"' + (syncOn ? ' checked' : '') + ' style="margin-right:6px" />启用多端同步</label>' +
       '<div class="form-hint">启用后：有网时自动与服务器同步，多人多设备实时共用同一份数据；断网时照常查询、登记，恢复网络后自动把离线操作补传上去。就算服务器重启丢了数据，各设备也会自动"补种"回去，不用担心。</div></div>' +
@@ -305,8 +347,7 @@ async function pageSettings() {
         '<div class="form-item"><label>同步服务器地址（留空 = 自动用协会默认）</label><input class="input" id="sync-url" value="' + escapeHtml(syncCfg.url || '') + '" placeholder="' + (syncEffUrl ? '留空 = 自动使用 ' + escapeHtml(syncEffUrl) : '如 https://hwms.pages.dev') + '" /></div>' +
         '<div class="form-item"><label>本机设备名（方便认账，随便起）</label><input class="input" id="sync-device" value="' + escapeHtml(syncCfg.device || '') + '" placeholder="如 张三-手机" /></div>' +
       '</div>' +
-      '<div class="form-item"><label>同步密钥（留空 = 用协会默认）</label><input class="input" id="sync-key" type="password" value="' + escapeHtml(syncCfg.key || '') + '" placeholder="' + (syncEffKey ? '留空 = 使用协会统一密钥' : '服务器没设密钥就留空') + '" /></div>' +
-      '<div class="form-hint">协会统一默认值写在 <code>js/sync.js</code> 顶部的 <code>SYNC_DEFAULT</code> 里（地址、密钥、是否默认开启）。改了那一处重新部署，全体成员就都跟着变；成员在这里填过就以自己填的为准。</div>' +
+      '<div class="form-hint">协会统一默认值写在 <code>js/sync.js</code> 顶部的 <code>SYNC_DEFAULT</code> 里（地址、是否默认开启）。改了那一处重新部署，全体成员就都跟着变；成员在这里填过就以自己填的为准。</div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">' +
         '<button class="btn btn-primary" onclick="saveSyncConfig()">保存同步设置</button>' +
         '<button class="btn btn-outline" onclick="testSyncServer()">测试服务器连接</button>' +
@@ -315,7 +356,7 @@ async function pageSettings() {
       '<div class="ai-quote" id="sync-test-result" style="display:none"></div>' +
       /* 把"本机实际连的服务器地址"显示出来：多设备对不上号时，一眼就能看出哪台连的是哪个后端 */
       '<div style="font-size:12.5px;color:var(--text-sub);margin-top:8px">上次同步：<span id="sync-last-text">' + (syncCfg.lastSync ? fmtDate(syncCfg.lastSync) : '从未同步') + '</span><br>' +
-      '本机实际使用的服务器：<b>' + escapeHtml(syncEffUrl || '（还没确定，无法同步）') + '</b>' + (syncEffKey ? '（已带密钥）' : '（未带密钥）') + '</div>' +
+      '本机实际使用的服务器：<b>' + escapeHtml(syncEffUrl || '（还没确定，无法同步）') + '</b></div>' +
     '</div>' +
     /* 主题 */
     '<div class="card">' +
@@ -567,7 +608,6 @@ async function saveSyncConfig() {
     enabledSet: true,                                                      // 标记：成员已手动定过开关，之后不再跟随协会默认
     enabled: $('#sync-enabled').checked,                                   // 开关
     url: $('#sync-url').value.trim().replace(/\/+$/, ''),                  // 成员自己填的地址（留空 = 用协会默认/网页自己的地址）
-    key: $('#sync-key') ? $('#sync-key').value.trim() : '',                // 成员自己填的密钥（留空 = 用协会统一密钥）
     device: $('#sync-device').value.trim() || '未命名设备',                 // 设备名
     lastSync: old.lastSync || 0                                            // 上次同步时间原样保留
   };
@@ -580,17 +620,12 @@ async function saveSyncConfig() {
   var serverSaved = null;                                                  // 记录配置有没有真正写进服务器：null=没试，true=成功，false=失败
   if (isAdmin && effUrl) {
     try {
-      var adminToken = cfg.key || SYNC_DEFAULT.key || '';                  // 用密钥作为 admin token
       var res = await fetch(effUrl + '/api/sync-config', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-token': adminToken                                     // 鉴权头
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           enabled: cfg.enabled,
-          url: cfg.url,                                                    // 留空表示"用当前域名"
-          key: cfg.key                                                     // 服务器端保存的密钥
+          url: cfg.url                                                     // 留空表示"用当前域名"
         })
       });
       serverSaved = res.ok;                                                // 必须看 HTTP 状态码，光"没报错"不代表服务器收下了
@@ -607,7 +642,7 @@ async function saveSyncConfig() {
   /* 关键提醒：配置没写进服务器时，别的设备（手机等）不会自动拿到它，
      必须明确告诉 admin，否则他会以为"全协会都生效了"，其实只有本机在同步 */
   if (serverSaved === false) {
-    toast('本机已保存，但配置没能写入服务器，其他设备不会自动生效：Cloudflare Pages 后端没有 /api/sync-config 接口，请把密钥填进 js/sync.js 的 SYNC_DEFAULT.key 后重新部署', 'warn');
+    toast('本机已保存，但配置没能写入服务器，其他设备不会自动生效：该后端没有 /api/sync-config 接口（纯静态托管就没有）。想全员统一，请把地址填进 js/sync.js 的 SYNC_DEFAULT.url 后重新部署', 'warn');
   } else {
     toast('同步设置已保存' + (cfg.enabled ? '，稍后自动开始同步' : ''), 'ok');  // 提示
   }
@@ -624,10 +659,9 @@ async function testSyncServer() {
   try {                                                                    // 尝试探活
     var res = await fetch(url + '/api/ping', { method: 'GET' });           // 服务器提供 /api/ping
     var data = await res.json();                                           // 解析应答
-    var keyTip = data.needKey ? '<br>该服务器已开启密钥，请确认下方"同步密钥"与服务器端一致' : '<br>该服务器未设密钥（局域网自用正常；服务器要暴露到公网时建议设置 SYNC_KEY）';  // 按服务器情况提示密钥
-    box.innerHTML = '<span style="color:var(--success)">连接成功！服务器版本 ' + escapeHtml(String(data.version || '1.0')) + '，可以正常同步' + keyTip + '</span>';  // 成功
+    box.innerHTML = '<span style="color:var(--success)">连接成功！服务器版本 ' + escapeHtml(String(data.version || '1.0')) + '，可以正常同步</span>';  // 成功
   } catch (err) {                                                          // 失败
-    box.innerHTML = '<span style="color:var(--danger)">连接失败：' + escapeHtml(err.message) + '<br>排查：① 检查地址拼写和端口是否写对；② 局域网的检查服务器电脑是否已双击运行"启动同步服务器.bat"、是否和本机在同一 WiFi；③ 服务器设置了 SYNC_KEY 的，"同步密钥"要填一致。注意：Cloudflare Pages 之类的静态托管网址没有同步接口，不能当同步服务器填。</span>';  // 排查提示
+    box.innerHTML = '<span style="color:var(--danger)">连接失败：' + escapeHtml(err.message) + '<br>排查：① 检查地址拼写和端口是否写对；② 局域网的检查服务器电脑是否已双击运行"启动同步服务器.bat"、是否和本机在同一 WiFi。注意：Cloudflare Pages 之类的静态托管网址没有同步接口，不能当同步服务器填。</span>';  // 排查提示
   }
 }
 
@@ -684,6 +718,7 @@ async function changeMyPwdSubmit() {
   u.salt = uid('salt');                                                         // 新盐
   u.passwordHash = await hashPassword(newPwd, u.salt);                            // 新哈希
   u.pwdChanged = true;                                                           // 已修改初始密码
+  stampSync(u);                                                                   // 盖同步时间戳（漏了它，自己改的密码不会同步到其他设备）
   await DB.put('users', u);                                                       // 写库
   await Log.add('修改密码', u.username + ' 修改了自己的密码');                       // 日志
   closeModal();                                                                     // 关

@@ -69,6 +69,15 @@
         (location.protocol === 'https:' || location.protocol === 'http:')) {
       navigator.serviceWorker.register('./sw.js')
         .catch(function () { /* 注册失败（如浏览器不支持）不影响正常使用 */ });
+      /* 新版本 Service Worker 接管后自动刷新一次。
+         否则老设备会一直吃缓存里的旧文件（得手动刷两次才换新），
+         改过的界面就"看不见"了。 */
+      var swReloaded = false;                                        // 防止重复刷新
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (swReloaded) return;                                      // 只刷一次
+        swReloaded = true;                                           // 标记
+        location.reload();                                           // 换上新文件
+      });
     }
   </script>
 </body>
