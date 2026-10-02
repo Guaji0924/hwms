@@ -1135,7 +1135,11 @@ async function exportFullBackup() {
     settings: await DB.all('settings')                                                               // 设置
   };
   downloadFile(JSON.stringify(backup, null, 2), '物料管家全库备份_' + fmtDateShort(Date.now()) + '.json', 'application/json');  // 下载
-  await DB.setSetting('lastBackupAt', Date.now());                                                    // 记录备份时间
+  /* 记录备份时间。这里不用 setSetting，而是自己带上 updatedAt：
+     这一项要参与多端同步（备份是全库的，任一台设备备份过，别的设备就不该再提醒），
+     而同步引擎靠 updatedAt 判断"这条要不要上传 / 谁的更新"，没有它就传不出去。 */
+  var backupAt = Date.now();                                                                          // 本次备份时间
+  await DB.put('settings', { id: 'lastBackupAt', value: backupAt, updatedAt: backupAt });              // 写入设置表
   await Log.add('全库备份', '导出了 ' + (backup.materials.length + backup.records.length) + ' 条数据');  // 日志
   toast('备份文件已下载，请妥善保存', 'ok');                                                            // 提示
 }

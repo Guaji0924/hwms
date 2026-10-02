@@ -188,10 +188,15 @@ var Sync = {
         }
       }
     }
-    /* settings 表只同步"物料分类树"这一项（让自定义分类也能多端共享） */
-    var catRow = await DB.get('settings', 'categoryTree');       // 读原始行（带 updatedAt）
-    if (catRow && (since === 0 || (catRow.updatedAt || 0) > since)) {  // 改过才传；since=0 全量补种时也要带上
-      changes.push({ store: 'settings', id: 'categoryTree', data: catRow });  // 打包整行
+    /* settings 表只同步下面这两项，其余（AI 配置、同步配置、欢迎标记等）留在本机：
+       · categoryTree —— 让自定义分类也能多端共享
+       · lastBackupAt —— 备份是全库的，任一台设备备份过，别的设备就不该再提醒 */
+    var SYNCED_SETTINGS = ['categoryTree', 'lastBackupAt'];      // 需要多端共享的设置项
+    for (var si = 0; si < SYNCED_SETTINGS.length; si++) {        // 逐项检查
+      var sRow = await DB.get('settings', SYNCED_SETTINGS[si]);  // 读原始行（带 updatedAt）
+      if (sRow && (since === 0 || (sRow.updatedAt || 0) > since)) {  // 改过才传；since=0 全量补种时也要带上
+        changes.push({ store: 'settings', id: SYNCED_SETTINGS[si], data: sRow });  // 打包整行
+      }
     }
     return changes;                                             // 交给调用方上传
   },
@@ -271,7 +276,7 @@ var Sync = {
     var kicked = false;                                         // 当前登录账号是不是被删掉/停用了（需要踢下线）
     for (var i = 0; i < changes.length; i++) {                  // 逐条处理
       var ch = changes[i];                                      // 一条远程变化
-      if (ch.store === 'settings') {                            // 设置表：只认分类树
+      if (ch.store === 'settings') {                            // 设置表：只认分类树和上次备份时间
         if (ch.id === 'categoryTree') {
           var localCat = await DB.get('settings', 'categoryTree');   // 本机原始行
           var remoteT = (ch.data && ch.data.updatedAt) || 0;         // 远程的改动时间
@@ -283,6 +288,16 @@ var Sync = {
             }
             applied++;                                                // 计数
           }
+        } else if (ch.id === 'lastBackupAt') {                       // 上次备份时间：取"更晚的那次备份"
+          var localBk = await DB.get('settings', 'lastBackupAt');    // 本机原始行
+          var remoteBk = (ch.data && ch.data.updatedAt) || 0;         // 远程那次备份的时间
+          var localBkT = (localBk && localBk.updatedAt) || 0;         // 本机那次备份的时间
+          if (remoteBk > localBkT) {                                  // 远程更晚 → 采用（提醒随之消失）
+            await DB.put('settings', ch.data);                        // 写入整行
+            applied++;                                                // 计数
+          }
+          /* 本机更晚时什么都不做：本机这条会被正常上传，
+             服务器只收"更新的"（push 里是 newT >= oldT），所以最终服务器和各端都会收敛到更晚的那次备份 */
         }
         continue;                                                   // 其他设置项不下发
       }

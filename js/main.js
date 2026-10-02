@@ -163,6 +163,7 @@ async function doLogin() {
     Reconcile.run(true).catch(function () {});                                       // 对账失败不影响登录
   }
   await maybeShowWelcome();                                                       // 首次运行欢迎弹窗
+  maybeShowBackupReminder();                                                      // 管理员超期未备份提醒（不阻塞登录）
   /* 新注册成员第一次登录：弹窗引导去看「使用手册」（管理员走上面的欢迎引导，不重复打扰） */
   if (isFirstLogin && Auth.user && Auth.user.role !== 'admin') {
     setTimeout(showManualHint, 800);                                                // 等主界面渲染稳定后再弹提示
@@ -202,6 +203,43 @@ async function maybeShowWelcome() {
   /* 同时提示预警 */
   var alerts2 = State.alertList();                                                          // 预警
   if (alerts2.length > 0) toast('有 ' + alerts2.length + ' 种物料库存告急', 'warn');            // 提醒
+}
+
+/* 备份提醒：只发给管理员。每次打开应用检查一次，超过 30 天没备份（或从未备份）就弹一次，可关闭。
+   "上次备份时间"（lastBackupAt）是参与多端同步的：备份是全库的，任一台设备备份过，
+   别的设备同步到之后就不再提醒。弹窗本身不写库，所以每个管理员各自看到一次。 */
+var _backupReminded = false;                                                              // 本次打开是否已弹过（关掉后本次不再弹，下次打开还会提醒）
+async function maybeShowBackupReminder() {
+  if (_backupReminded) return;                                                            // 本次已弹过
+  if (!isAdminNow()) return;                                                               // 只发给管理员
+  /* 新设备本地还没有"上次备份时间"，得先等第一轮同步把服务器上的值拉下来，
+     否则会误报"从来没有导出过备份"。最多等约 10 秒；断网/同步失败就按本机数据判断。 */
+  if (typeof Sync !== 'undefined' && Sync.state.enabled && navigator.onLine && !Sync.state.lastSync) {
+    for (var w = 0; w < 33 && !Sync.state.lastSync; w++) {                                  // 33 × 300ms ≈ 10 秒
+      await new Promise(function (r) { setTimeout(r, 300); });                              // 等同步把 lastBackupAt 拉下来
+    }
+  }
+  var last = await DB.getSetting('lastBackupAt', 0);                                       // 上次备份时间（0 = 从没备份过）
+  if (last && Date.now() - last <= 30 * 86400000) return;                                   // 30 天内备份过：不打扰
+  _backupReminded = true;                                                                   // 标记：本次不再弹
+  var tip = last
+    ? '上次备份是 <b>' + fmtDate(last) + '</b>，已经过去 <b>' + Math.floor((Date.now() - last) / 86400000) + '</b> 天。'
+    : '这台设备还<b>从来没有导出过备份</b>。';                                                   // 文案（区分超期 / 从未备份）
+  /* 首次运行的欢迎弹窗可能正开着：等它关掉再弹，避免两个弹窗互相顶掉。最多等 20 秒，等不到就这次不弹。 */
+  var tries = 0;                                                                            // 已等待次数
+  var timer = setInterval(function () {
+    if ($('.modal-mask') && ++tries < 40) return;                                            // 还有弹窗占着 → 继续等
+    clearInterval(timer);                                                                    // 停止等待
+    if ($('.modal-mask')) return;                                                            // 等超时仍被占着 → 放弃本次
+    openModal('备份提醒', '' +
+      '<div style="font-size:13.5px;line-height:1.9">' +
+        tip + '<br>' +
+        '数据只存在本机浏览器里，浏览器数据被清理、或换台电脑，都找不回来。<br>' +
+        '建议定期在「数据管理」页点 <b>导出全库备份（JSON）</b>，把文件存到网盘或 U 盘。' +
+      '</div>',
+      '<button class="btn btn-outline" onclick="closeModal()">稍后再说</button>' +
+      '<button class="btn btn-primary" onclick="closeModal();gotoPage(\'data\')">去备份</button>');
+  }, 500);
 }
 
 /* ==================== 4. 主界面框架 ==================== */
@@ -452,6 +490,9 @@ document.addEventListener('DOMContentLoaded', async function () {
       try { await Sync.init(); }                                                                                                           // 启动（内部会按配置决定是否真正联网同步）
       catch (e) { console.warn('同步引擎启动失败，不影响本机使用', e); }                                                                      // 失败不阻断应用启动
     }
+    /* 7. 管理员超期未备份提醒。放在同步启动之后：它会先等第一轮同步拉下"上次备份时间"再判断，
+          否则新设备会误报"从来没有导出过备份"。未登录时函数内部会直接返回。 */
+    maybeShowBackupReminder();                                                                                                             // 不 await：不阻塞启动
   } catch (err) {                                                                                                                          // 初始化失败
     console.error(err);                                                                                                                      // 打印
     document.body.innerHTML = '<div style="padding:60px 20px;text-align:center;font-family:sans-serif">' +
