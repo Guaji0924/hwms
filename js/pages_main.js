@@ -2012,7 +2012,7 @@ function bomExport() {
     var nm = itemEl.querySelector('.p-name b').textContent;
     var sub = itemEl.querySelector('.p-name div').textContent;
     var qty = itemEl.querySelector('.bom-line-total').textContent;
-    lines.push('"' + nm + '","' + sub + '","' + escapeCsv(it.material.loc || '') + '",' + qty + ',库里有,');
+    lines.push('"' + nm + '","' + sub + '","' + escapeCsv((it.material.loc || '') + (it.material.locNo || '')) + '",' + qty + ',库里有,');
   }
   for (var b = 0; b < st.plan.missing.length; b++) {
     var ms = st.plan.missing[b];

@@ -434,6 +434,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; } /* 表�
 .badge-purple { background: rgba(124,58,237,.12); color: #7c3aed; }      /* 紫色：借出 */
 .badge-teal { background: rgba(13,148,136,.12); color: #0d9488; }        /* 青色：归还 */
 .badge-orange { background: rgba(234,88,12,.12); color: #ea580c; }       /* 橙色：调整 */
+.badge-primary { background: var(--primary-light); color: var(--primary); }  /* 主题色：库存调整（跟着主题走，深浅色都自适应） */
 .badge svg { width: 12px; height: 12px; flex: none; }                    /* 徽章内小图标（如位置 pin） */
 
 /* --- 标签 chips --- */

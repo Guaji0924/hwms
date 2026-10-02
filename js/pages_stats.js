@@ -889,6 +889,13 @@ async function pageData() {
       '</div>';
   }
   if (recycled.length === 0) recRows = '<div class="empty" style="padding:26px">回收站是空的</div>';  // 空状态
+  /* 示例数据状态：统计本机（已同步）还活着的示例物料数量。
+     载入后所有设备同步拿到这些物料，按钮就变成"撤回示例数据"，
+     所以不管是哪台设备、哪个用户，看到的按钮状态都一致。 */
+  var demoCount = 0;                                                          // 示例物料数量
+  for (var dc = 0; dc < all.length; dc++) {                                    // 遍历全部物料
+    if (all[dc].source === 'demo' && !all[dc].deleted) demoCount++;            // 只数没被撤回的示例物料
+  }
   /* 上次备份时间 */
   var lastBackup = await DB.getSetting('lastBackupAt', 0);                    // 读取
   var backupTip = lastBackup
@@ -926,10 +933,14 @@ async function pageData() {
         '<div style="height:76px;overflow:auto">' + recRows + '</div></div>' +
       /* 示例数据：整块卡片仅管理员可见，普通成员不出现这个框 */
       (isAdminNow() ? '<div class="card" style="margin-top:16px;margin-bottom:0"><div class="card-title">示例数据</div>' +
-        '<div style="font-size:13px;color:var(--text-sub);margin-bottom:12px">首次使用可以一键导入 60 余种协会常用元件和 5 个月的模拟记录，体验完整功能后再清空。</div>' +
+        '<div style="font-size:13px;color:var(--text-sub);margin-bottom:12px">' + (demoCount > 0
+          ? '当前已载入 <b>' + demoCount + '</b> 种示例物料（含模拟出入库记录）。示例数据只用于体验功能，正式使用前记得撤回。'
+          : '首次使用可以一键导入 ' + DEMO_MATERIALS.length + ' 种协会常用元件和 5 个月的模拟记录，体验完整功能后再撤回。') + '</div>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-          '<button class="btn btn-outline" onclick="seedDemoData()">载入示例数据</button>' +
-          '<button class="btn btn-outline" style="color:var(--danger)" onclick="clearBizData()">清空物料与记录</button>' +
+          /* 双态按钮：没载入 → "载入示例数据"；已载入 → "撤回示例数据"，避免重复载入造成数据叠加 */
+          (demoCount > 0
+            ? '<button class="btn btn-outline" style="color:var(--danger)" onclick="withdrawDemoData()">撤回示例数据</button>'
+            : '<button class="btn btn-outline" onclick="seedDemoData()">载入示例数据</button>') +
         '</div></div>' : '') +
     '</div>' +
     /* 右：操作日志（独占整列；卡片撑满列高、列表内部滚动，与左列精确等长） */
@@ -1228,12 +1239,18 @@ async function purgeMaterial(id) {
   }
 }
 
-/* --- 3.5 示例数据 / 清空 --- */
+/* --- 3.5 示例数据（载入 / 撤回，双态按钮切换） --- */
 
 async function seedDemoData() {
   if (!isAdminNow()) { toast('没有权限', 'err'); return; }
   if (!Auth.user || Auth.user.role !== 'admin') { toast('只有管理员可以载入示例数据', 'err'); return; }              // 权限：仅管理员
-  var ok = await confirmBox('将导入 60 余种协会常用元件 + 5 个月模拟出入库记录。\n已有相同编号的物料会自动跳过。确定载入吗？', '载入');  // 确认
+  /* 防重复：只要库里还有活着的示例物料，就不允许再载入一次（按钮这时也已经是"撤回示例数据"）。
+     多设备同步后各端状态一致，所以这条拦截在每台设备上都会生效。 */
+  var existed = await DB.all('materials');                                                                          // 全部物料
+  var aliveDemo = 0;                                                                                                 // 还活着的示例物料数
+  for (var e = 0; e < existed.length; e++) { if (existed[e].source === 'demo' && !existed[e].deleted) aliveDemo++; }   // 统计
+  if (aliveDemo > 0) { toast('已经载入过示例数据了，请先点"撤回示例数据"再重新载入', 'err'); pageData(); return; }        // 拦截重复载入
+  var ok = await confirmBox('将导入 ' + DEMO_MATERIALS.length + ' 种协会常用元件 + 5 个月模拟出入库记录。\n载入后按钮会变成"撤回示例数据"，随时可以一键撤回。确定载入吗？', '载入');  // 确认
   if (!ok) return;                                                                                                                       // 取消
   var all = await DB.all('materials');                                                                                                     // 现有物料
   var byCode = {};                                                                                                                          // 编号索引
@@ -1243,10 +1260,11 @@ async function seedDemoData() {
     var src = DEMO_MATERIALS[d];                                                                                                               // 当前
     if (byCode[src.code]) continue;                                                                                                            // 已存在跳过
     toAdd.push({                                                                                                                                // 复制并生成新对象（不修改原数组）
-      id: uid('mat'), code: src.code, name: src.name, model: src.model, cat: src.cat, sub: src.sub,
-      tags: src.tags, unit: src.unit, loc: src.loc, price: src.price, stock: src.stock, minStock: src.minStock,
-      link: src.link, silk: src.silk, alias: src.alias, desc: src.desc,
-      supplier: '', source: 'demo', createdAt: Date.now(), updatedAt: Date.now()
+      id: uid('mat'), code: src.code, name: src.name, model: src.model, pkg: src.pkg || '', locNo: src.locNo || '',                               // 基本字段（含封装、位置编号）
+      cat: src.cat, sub: src.sub, tags: src.tags, unit: src.unit, loc: src.loc, price: src.price, stock: src.stock, minStock: src.minStock,      // 分类与库存
+      link: src.link, silk: src.silk, alias: src.alias, desc: src.desc,                                                                          // 其他
+      supplier: src.supplier || '', datasheet: src.datasheet || '',                                                                              // 供应商、数据手册
+      source: 'demo', createdAt: Date.now(), updatedAt: Date.now()                                                                               // 标记来源 + 时间戳（同步用）
     });
   }
   await DB.bulkPut('materials', toAdd);                                                                                                          // 写入物料
@@ -1264,10 +1282,10 @@ async function seedDemoData() {
   pageData();                                                                                                                                            // 刷新页
 }
 
-async function clearBizData() {
+async function withdrawDemoData() {
   if (!isAdminNow()) { toast('没有权限', 'err'); return; }
-  if (!Auth.user || Auth.user.role !== 'admin') { toast('只有管理员可以清空', 'err'); return; }                      // 权限
-  var ok = await confirmBox('将只删除【示例数据】（载入的示例元件和模拟记录），你自己创建的物料和记录会保留。确定吗？', '清空示例');  // 确认
+  if (!Auth.user || Auth.user.role !== 'admin') { toast('只有管理员可以撤回', 'err'); return; }                      // 权限
+  var ok = await confirmBox('将只撤回【示例数据】（载入的示例元件和模拟记录），你自己创建的物料和记录会保留。确定吗？', '撤回示例');  // 确认
   if (!ok) return;                                                                                                      // 取消
   /* 注意：这里必须用 softDelete（打删除墓碑），不能直接 DB.del 真删。
      真删不会留下任何痕迹，同步引擎就没东西可上传 —— 别的设备根本不知道
@@ -1279,9 +1297,9 @@ async function clearBizData() {
   var recs = await DB.all('records');                                                                                   // 找示例记录
   var delR = 0;
   for (var j = 0; j < recs.length; j++) { if (recs[j].source === 'demo' && !recs[j].deleted) { await softDelete('records', recs[j].id); delR++; } }
-  await Log.add('清空示例数据', '删除示例物料 ' + delM + ' 种、记录 ' + delR + ' 条');                                       // 日志
+  await Log.add('撤回示例数据', '删除示例物料 ' + delM + ' 种、记录 ' + delR + ' 条');                                       // 日志
   await State.refreshMaterials();                                                                                           // 刷新
-  toast('已删除示例数据（物料 ' + delM + '，记录 ' + delR + '）', 'ok');                                                         // 提示
+  toast('已撤回示例数据（物料 ' + delM + '，记录 ' + delR + '）', 'ok');                                                       // 提示
   PageCache = {};                                                                                                         // 作废缓存
   pageData();                                                                                                                // 刷新页
 }

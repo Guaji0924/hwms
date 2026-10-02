@@ -72,7 +72,7 @@ function uid(prefix) {
 var RECORD_TYPES = {
   'in':     { label: '入库',     badge: 'badge-green', sign: 1 },   // 入库：采购 / 归还 / 收到赠品
   'out':    { label: '出库',     badge: 'badge-blue',  sign: -1 },  // 出库：领用 / 消耗 / 报废
-  'adjust': { label: '库存调整', badge: 'badge-gray',  sign: 0 },   // 调整：盘点纠错，不增不减
+  'adjust': { label: '库存调整', badge: 'badge-primary', sign: 0 },   // 调整：盘点纠错，不增不减（用主题色，跟其他类型区分开）
   'revoke': { label: '撤回冲销', badge: 'badge-red',  sign: 0 }     // 撤回某笔记录时新开的冲销记录（库存方向与原记录相反）
 };
 
@@ -661,7 +661,7 @@ function locBadge(loc, locNo, lock) {
   if (lock) return '<span class="pmx-loc pmx-loc-lock">🔒 未解锁</span>';
   if (!loc) return '<span class="pmx-loc">未填</span>';
   return '<span class="pmx-loc' + (locNo ? ' pmx-loc-has' : '') + '">' + escapeHtml(loc) +
-    (locNo ? ' ' + escapeHtml(locNo) : '') + '</span>';   // 位置+编号直接拼接（一个框，都 #FF7F27）
+    (locNo ? escapeHtml(locNo) : '') + '</span>';   // 位置+编号直接拼接（一个框，都 #FF7F27），如"货柜A37"
 }
 
 /* ==================== 7. Search：模糊搜索引擎 ==================== */
@@ -670,11 +670,17 @@ function locBadge(loc, locNo, lock) {
 var Search = {
   /* 给单个物料构建搜索索引（拼接所有可搜索字段 + 拼音） */
   buildIndex: function (m) {
-    var zh = [m.name, m.model, m.pkg, m.cat, m.sub, (m.tags || []).join(' '), m.silk, m.alias, m.desc, m.loc, m.locNo, m.code].join('|');  // 所有中文字段拼一起
+    /* 中文字段：全部参与"直接包含"匹配。中文不会误伤，因为只有真出现这些字才算命中 */
+    var zh = [m.name, m.model, m.pkg, m.cat, m.sub, (m.tags || []).join(' '), m.silk, m.alias, m.desc, m.loc, m.locNo, m.code].join('|');
+    /* 拼音只认"身份字段"：名称 / 标签 / 丝印 / 别称 / 型号 / 编号。
+       描述、分类、位置等字段不参与拼音 —— 否则它们的汉字会带来大量无关的拼音组合。
+       另外只取"连续汉字段"的拼音（toPinyinRuns），避免汉字与相邻英文拼成假词。 */
+    var pinyinFields = [m.name, (m.tags || []).join(' '), m.silk, m.alias, m.model, m.code];
     m._search = {                                               // 挂在内存字段 _search 上（下划线开头表示不入库）
       low: ('|' + zh + '|').toLowerCase(),                      // 全部转小写方便比对
-      pinyinFull: toPinyinText(zh, 'full'),                     // 全拼
-      pinyinFirst: toPinyinText(zh, 'first')                    // 拼音首字母
+      /* 每个字段单独算拼音，再用 | 隔开：防止两个字段首尾字符被拼成一个假词 */
+      pinyinFull: pinyinFields.map(function (f) { return toPinyinRuns(f, 'full'); }).join('|'),   // 全拼
+      pinyinFirst: pinyinFields.map(function (f) { return toPinyinRuns(f, 'first'); }).join('|')  // 拼音首字母
     };
   },
 
@@ -737,8 +743,11 @@ var Search = {
     if (pkg.indexOf(word) >= 0) score += 35;                     // 封装命中
     var desc = (m.desc || '').toLowerCase();                     // 小写描述
     if (desc.indexOf(word) >= 0) score += 10;                    // 描述命中（权重低）
-    /* 拼音匹配：输入 dianzu 或 dz 都能找到"电阻" */
-    if (pinyinW && pinyinW.length >= 2) {                        // 关键词能转成拼音才比较
+    /* 拼音匹配：只在关键词是拼音/英文时启用（如 dianzu / dz）。
+       关键词本身是中文时不做拼音匹配 —— 中文只按"真的包含这几个字"命中，
+       否则"底盘/车轮/舵机"这类库里没有的词，会被拼音首字母误匹配到无关物料。 */
+    var hasChinese = /[\u4e00-\u9fa5]/.test(word);              // 关键词里是否含汉字
+    if (!hasChinese && pinyinW && pinyinW.length >= 2) {        // 纯拼音/英文关键词才比拼音
       if (idx.pinyinFull.indexOf(pinyinW) >= 0) score += 45;     // 全拼命中
       if (idx.pinyinFirst.indexOf(pinyinF) >= 0 && pinyinF.length >= 2) score += 25;  // 首字母命中（至少两个字母）
     }

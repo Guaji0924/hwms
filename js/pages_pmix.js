@@ -89,7 +89,7 @@ async function pmxRunAI() {
       return '· ' + m.name + (_ps.length ? '（' + _ps.join('，') + '）' : '') +
         '，类别 ' + [m.cat, m.sub].filter(function (x) { return x; }).join('/') +
         '，库存 ' + (m.stock || 0) + (m.unit || '') +
-        (m.loc ? '，位置 ' + (m.loc || '') + (m.locNo ? ' ' + m.locNo : '') : '');
+        (m.loc ? '，位置 ' + (m.loc || '') + (m.locNo || '') : '');
     }).join('\n');
     var sysPrompt =
       '你是电子协会的项目指导老师兼物料管理员。学生想做一个电子项目，你要基于协会物料库的现有物料，给出多个确实能做出来的方案，并讲清楚实现方法。\n\n' +
@@ -1774,7 +1774,7 @@ async function pmxSendChat() {
         var _ps = [];
         if (_m.model) _ps.push(_m.model);
         if (_m.pkg) _ps.push(_m.pkg);
-        if (_m.loc || _m.locNo) _ps.push((_m.loc || '') + (_m.locNo ? ' ' + _m.locNo : ''));
+        if (_m.loc || _m.locNo) _ps.push((_m.loc || '') + (_m.locNo || ''));
         return '· ' + (_m.name || '') + (_ps.length ? '（' + _ps.join('，') + '）' : '') + '：需 ' + x.needQty + ' 个，现有 ' + (_m.stock !== undefined ? _m.stock : 0);
       });
       /* 已采用替代：用 X（型号，封装）替代 Y */
@@ -1795,7 +1795,7 @@ async function pmxSendChat() {
           if (_lb.model) _ps.push('型号 ' + _lb.model);
           if (_lb.pkg) _ps.push('封装 ' + _lb.pkg);
           if (_lb.cat) _ps.push('类别 ' + _lb.cat);
-          if (_lb.loc || _lb.locNo) _ps.push('位置 ' + (_lb.loc || '') + (_lb.locNo ? ' ' + _lb.locNo : ''));
+          if (_lb.loc || _lb.locNo) _ps.push('位置 ' + (_lb.loc || '') + (_lb.locNo || ''));
           _ps.push('现有 0');
         } else {
           if (_f.v) _ps.push(_f.v);
@@ -1982,7 +1982,7 @@ function pmxExportPickDo(addLow, onlyMarked) {
     if (marks && !marks[m.id]) continue;                                               // 普通成员：只导出点过出库的
     var isLow = it.status === 'low' || it.status === 'none';
     if (isLow && !addLow) continue;                                                   // 不加：库里不够的跳过
-    var loc = canSeeLoc(m.id) ? (m.loc || '') + (m.locNo ? '·' + m.locNo : '') : '未解锁';
+    var loc = canSeeLoc(m.id) ? (m.loc || '') + (m.locNo || '') : '未解锁';
     var st = isLow ? '库里不够' : (it.alt ? '已采用代替' : '库里有');
     var row = '"' + escapeCsv(m.name) + '","' + escapeCsv(m.model || '') + '","' + escapeCsv(loc) + '",' + (it.needQty * PMX.copies) + ',' + st + ',';
     if (isLow) grpLow.push(row); else if (it.alt) grpAlt.push(row); else grpHave.push(row);

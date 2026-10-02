@@ -398,7 +398,7 @@ function printPickList() {
   var rows = '';                                                                                                                                          // 行
   for (var i = 0; i < PlanState.items.length; i++) {                                                                                                         // 遍历
     var it = PlanState.items[i];                                                                                                                                // 当前
-    rows += '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(it.material.name) + '</td><td>' + escapeHtml(it.material.model || '') + '</td><td><b>' + it.needQty + ' ' + escapeHtml(it.material.unit || '') + '</b></td><td>' + (canSeeLoc(it.material.id) ? '<span style="color:#FF7F27;font-weight:600">' + escapeHtml(it.material.loc || '') + '</span>' : '🔒') + '</td></tr>';  // 行
+    rows += '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(it.material.name) + '</td><td>' + escapeHtml(it.material.model || '') + '</td><td><b>' + it.needQty + ' ' + escapeHtml(it.material.unit || '') + '</b></td><td>' + (canSeeLoc(it.material.id) ? '<span style="color:#FF7F27;font-weight:600">' + escapeHtml((it.material.loc || '') + (it.material.locNo || '')) + '</span>' : '🔒') + '</td></tr>';  // 行（位置+编号拼成"货柜A37"）
   }
   w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>取件清单</title>' +                            // 页面头
     '<style>body{font-family:"Microsoft YaHei",sans-serif;padding:24px}h2{margin-bottom:4px}p{color:#666;font-size:13px;margin-top:0}' +
@@ -881,7 +881,7 @@ function prInChoose() {
       html += '<div style="display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">' +
         '<div style="flex:1;min-width:150px">' +
           '<span class="t-link" onclick="gotoMaterial(\'' + it.id + '\')">' + escapeHtml(it.name) + '</span> <span style="color:var(--text-sub);font-size:12px">' + escapeHtml(it.model || '') + '</span><br>' +
-          '<span style="font-size:12.5px;color:var(--text-sub)">库存 ' + (it.stock || 0) + ' ' + escapeHtml(it.unit || '') + (it.loc && canSeeLoc(it.id) ? ' · <span style="color:#FF7F27;font-weight:600">' + escapeHtml(it.loc) + '</span>' : '') + '</span>' +
+          '<span style="font-size:12.5px;color:var(--text-sub)">库存 ' + (it.stock || 0) + ' ' + escapeHtml(it.unit || '') + (it.loc && canSeeLoc(it.id) ? ' · <span style="color:#FF7F27;font-weight:600">' + escapeHtml((it.loc || '') + (it.locNo || '')) + '</span>' : '') + '</span>' +
         '</div>' +
         '<button class="btn btn-sm btn-success" onclick="prInStockWithPhoto(\'' + it.id + '\')">入库</button>' +
       '</div>';
@@ -988,7 +988,7 @@ function prFindInStock() {
       html += '<div style="display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);flex-wrap:wrap">' +
         '<div style="flex:1;min-width:150px">' +
           '<span class="t-link" onclick="gotoMaterial(\'' + it.id + '\')">' + escapeHtml(it.name) + '</span> <span style="color:var(--text-sub);font-size:12px">' + escapeHtml(it.model || '') + '</span><br>' +
-          '<span style="font-size:12.5px;color:' + (low ? 'var(--danger)' : 'var(--text-sub)') + '">库存 ' + (it.stock || 0) + ' ' + escapeHtml(it.unit || '') + (low ? '（已达警戒线）' : '') + (it.loc && canSeeLoc(it.id) ? ' · 位置：<span style="color:#FF7F27;font-weight:600">' + escapeHtml(it.loc) + '</span>' : '') + '</span>' +
+          '<span style="font-size:12.5px;color:' + (low ? 'var(--danger)' : 'var(--text-sub)') + '">库存 ' + (it.stock || 0) + ' ' + escapeHtml(it.unit || '') + (low ? '（已达警戒线）' : '') + (it.loc && canSeeLoc(it.id) ? ' · 位置：<span style="color:#FF7F27;font-weight:600">' + escapeHtml((it.loc || '') + (it.locNo || '')) + '</span>' : '') + '</span>' +
         '</div>' +
         '<button class="btn btn-sm btn-blue" onclick="openStockIOModal(\'' + it.id + '\', \'out\')">出库</button>' +
       '</div>';
@@ -1235,7 +1235,7 @@ function aipPrint() {
   var rows = '';
   for (var i = 0; i < plan.items.length; i++) {
     var it = plan.items[i];
-    rows += '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(it.name) + '</td><td>' + escapeHtml(it.model || '') + '</td><td><b>' + (it.needQty * copies) + '</b></td><td>' + (canSeeLoc(it.mid || it.id) ? '<span style="color:#FF7F27;font-weight:600">' + escapeHtml(it.loc || '') + '</span>' : '🔒') + '</td><td style="width:40px"></td></tr>';
+    rows += '<tr><td>' + (i + 1) + '</td><td>' + escapeHtml(it.name) + '</td><td>' + escapeHtml(it.model || '') + '</td><td><b>' + (it.needQty * copies) + '</b></td><td>' + (canSeeLoc(it.mid || it.id) ? '<span style="color:#FF7F27;font-weight:600">' + escapeHtml((it.loc || '') + (it.locNo || '')) + '</span>' : '🔒') + '</td><td style="width:40px"></td></tr>';
   }
   w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>取件清单</title>' +
     '<style>body{font-family:"Microsoft YaHei",sans-serif;padding:24px}table{width:100%;border-collapse:collapse;font-size:14px}td,th{border:1px solid #bbb;padding:8px}th{background:#eee}@media print{.noprint{display:none}}</style></head><body>' +
