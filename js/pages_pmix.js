@@ -1381,16 +1381,60 @@ function pmxBomMapApply() {
   pmxBuildPlanFromGrid(_pmxMap.grid, _pmxMap.headIdx, map, '嘉立创 BOM 手动映射');
 }
 
-/* 替代物料简要信息：型号/规格 · 封装 · 库存 · 位置（贴片电阻电容也能看出是哪个） */
-function pmxMatBrief(m) {
-  if (!m) return '';
-  var s = [];
-  if (m.model) s.push(escapeHtml(m.model));
-  if (m.pkg) s.push(escapeHtml(m.pkg));
-  var txt = s.join(' · ');
-  var loc = '';
-  try { loc = pmxLocBadge(m.id, m.loc, m.locNo); } catch (e) {}
-  return (txt ? txt + ' · ' : '') + '库存 ' + m.stock + (m.unit ? escapeHtml(m.unit) : '') + (loc ? ' · ' + loc : '');
+/* ============================================================
+ * 替代建议展示：把 BOM 原物料与仓库替代物料的字段全部贴出来
+ *   - 历史持久化用快照（snapshot），避免退出后只剩名称
+ *   - 快照刻意不含存放位置（历史里不需要看位置）
+ * ============================================================ */
+/* 仓库物料快照（型号/封装/类别/子类/标签/库存） */
+function pmxMatSnap(m) {
+  if (!m) return null;
+  return {
+    name: m.name || '', model: m.model || '', pkg: m.pkg || '',
+    cat: m.cat || '', sub: m.sub || '', tags: (m.tags || []).slice(0, 8),
+    stock: (m.stock === undefined ? 0 : m.stock), unit: m.unit || ''
+  };
+}
+/* 原 BOM 物料快照（把 BOM 表识别出的所有字段都带上） */
+function pmxBomSnap(f) {
+  if (!f) return null;
+  return {
+    name: f.name || '', cls: f.cls || '', v: f.v || '', model: f.model || '', nm: f.nm || '',
+    pkg: f.pkg || '', mfr: f.mfr || '', code: f.code || '', des: f.des || '',
+    cmt: f.cmt || '', cat: f.cat || '', mount: f.mount || ''
+  };
+}
+/* 字段行：有值才渲染（左标签右值，长值自动换行） */
+function pmxKv(label, val) {
+  val = String(val == null ? '' : val).trim();
+  if (!val) return '';
+  return '<div class="pmx-kv"><span class="pmx-kv-k">' + label + '</span><span class="pmx-kv-v">' + escapeHtml(val) + '</span></div>';
+}
+/* 原 BOM 物料框：黑字标题（类别+标称值/型号+封装） + 全部 BOM 字段 */
+function pmxBomBoxHtml(f, fallbackText) {
+  if (!f) {
+    return '<div class="pmx-bom-box"><div class="pmx-corr-tag">原 BOM 物料</div>' +
+      '<div class="pmx-box-head"><b>' + escapeHtml(fallbackText || '') + '</b></div></div>';
+  }
+  var mt = pmxMissText(f);
+  var kv = pmxKv('类别', f.cls) + pmxKv('标称值', f.v) + pmxKv('型号', f.model) + pmxKv('封装', f.pkg) +
+    pmxKv('厂家型号', f.mfr) + pmxKv('位号', f.des) + pmxKv('立创编号', f.code) + pmxKv('Comment', f.cmt) +
+    pmxKv('分类列', f.cat) + pmxKv('安装类型', f.mount) + pmxKv('BOM 名称', f.nm) + pmxKv('识别名称', f.name);
+  return '<div class="pmx-bom-box"><div class="pmx-corr-tag">原 BOM 物料</div>' +
+    '<div class="pmx-box-head"><b>' + escapeHtml(mt.main) + '</b></div>' +
+    (kv ? '<div class="pmx-kv-list">' + kv + '</div>' : '') + '</div>';
+}
+/* 替代物料框：仓库物料全部字段（不含存放位置） */
+function pmxMatBoxHtml(snap) {
+  if (!snap) {
+    return '<div class="pmx-alt-box none"><div class="pmx-corr-tag">替代物料（仓库）</div>' +
+      '<span style="color:var(--text-sub);font-size:12.5px">没有找到合适的替代品</span></div>';
+  }
+  var kv = pmxKv('型号', snap.model) + pmxKv('封装', snap.pkg) + pmxKv('类别', snap.cat) + pmxKv('子类', snap.sub) +
+    pmxKv('标签', (snap.tags || []).join('、')) + pmxKv('库存', (snap.stock === undefined ? '' : snap.stock) + (snap.unit || ''));
+  return '<div class="pmx-alt-box"><div class="pmx-corr-tag">替代物料（仓库）</div>' +
+    '<div class="pmx-box-head"><b>' + escapeHtml(snap.name || '替代物料') + '</b></div>' +
+    (kv ? '<div class="pmx-kv-list">' + kv + '</div>' : '') + '</div>';
 }
 
 /* ============================================================
@@ -1414,10 +1458,10 @@ function pmxMountOk(want, got) { return !want || !got || want === got; }
  * ============================================================ */
 async function pmxFindAlt() {
   var plan = PMX.plan;
-  /* 只对还没采用替代的缺失物料查找；保留原始索引映射 */
-  var pending = [], pendingIdx = [];
+  /* 只对还没采用替代的缺失物料查找 */
+  var pending = [];
   for (var pp = 0; pp < plan.missing.length; pp++) {
-    if (!plan.missing[pp].adopted) { pending.push(plan.missing[pp]); pendingIdx.push(pp); }
+    if (!plan.missing[pp].adopted) { pending.push(plan.missing[pp]); }
   }
   if (!pending.length) { toast('缺失物料都已采用替代', 'warn'); return; }
   var cfg = await pickAIConfig('pick');
@@ -1426,7 +1470,7 @@ async function pmxFindAlt() {
   var libTxt = mats.slice(0, 50).map(function (m) { return m.id + '|' + m.name + (m.model ? '/' + m.model : '') + '/安装' + (pmxMountType(m.pkg) || '未知') + '/库存' + m.stock; }).join('\n') || '（仓库是空的）';
   var BATCH = 10;
   var estMin = Math.ceil(Math.ceil(pending.length / BATCH) * 2.5);   /* 串行每批约 2.5 分钟（实测），按批数估算 */
-  openModal('AI 查找替代', '<div style="padding:20px;text-align:center;color:var(--text-sub)">正在让 AI 对照仓库找替代……<div style="margin-top:12px;font-size:13px;color:var(--text-sub)">共 ' + pending.length + ' 种缺失，预计约 ' + estMin + ' 分钟（每批 10 条约 2-3 分钟），关闭弹窗可随时中止</div></div>', null);
+  openModal('AI 查找替代', '<div style="padding:20px;text-align:center;color:var(--text-sub)">正在让 AI 对照仓库找替代……<div style="margin-top:12px;font-size:13px;color:var(--text-sub)">共 ' + pending.length + ' 种缺失，预计约 ' + estMin + ' 分钟（每批 10 条约 2-3 分钟），关闭弹窗可随时中止</div></div>', null, true);
   window._aiAbort = false;                                         // 重置中止标志（须在 openModal 之后）
   var batches = Math.ceil(pending.length / BATCH), done = 0, all = [];
   for (var b0 = 0; b0 < batches; b0++) {
@@ -1455,44 +1499,36 @@ async function pmxFindAlt() {
     if (mbn) mbn.innerHTML = '<div class="empty">AI 没有返回可用建议</div>';
     return;
   }
-  PMX._lastAltSugs = all;                     // 记住本次建议，供历史里"返回建议"用
-  await pmixAltSaveHistory(pending, all);   // 写入查找历史（保留一天）
-  /* 渲染建议列表（弹窗内） */
-  var html = '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">' +
-    '<div style="font-size:12.5px;color:var(--text-sub)">共 ' + all.length + ' 条建议，点"采用"后加入左侧"已采用替代"区域</div>' +
-    '<button class="btn btn-sm btn-outline" onclick="pmixAltShowHistory()">' + ICONS.history + '查找历史（近 24 小时）</button></div>';
+  /* 解析每条建议：校验类别与安装类型，取到仓库里真正可用的替代物料，并留存完整快照（供历史查看） */
+  var resolved = [];
   for (var s = 0; s < all.length; s++) {
     var sug = all[s] || {};
     var mi = -1;
     for (var q = 0; q < pending.length; q++) { if (aiKwHit(pending[q].kw, sug.kw)) { mi = q; break; } }
-    var realIdx = mi >= 0 ? pendingIdx[mi] : -1;
     var showKw = mi >= 0 ? String(pending[mi].kw).split('|')[0] : (sug.kw || '?');
     var altId = sug.altId && mats.some(function (x) { return x.id === sug.altId; }) ? sug.altId : fuzzyFindAlt(mats, sug.altName, showKw, (mi >= 0 && pending[mi]._f) ? pending[mi]._f.mount : '');
+    var _am = null;
     if (altId) {                                                                   // AI 直接给 id 也过类别+安装类型校验（电容不能被 LED 替代、贴片不能替插件）
-      var _am = null;
       for (var _ai = 0; _ai < mats.length; _ai++) { if (mats[_ai].id === altId) { _am = mats[_ai]; break; } }
-      if (!_am || !altClsOk(showKw, _am)) altId = '';
-      if (altId) {
+      if (!_am || !altClsOk(showKw, _am)) { altId = ''; _am = null; }
+      else {
         var wantM = (mi >= 0 && pending[mi]._f) ? pending[mi]._f.mount : '';
-        if (!pmxMountOk(wantM, pmxMountType(_am.pkg))) altId = '';
+        if (!pmxMountOk(wantM, pmxMountType(_am.pkg))) { altId = ''; _am = null; }
       }
     }
-    var canAdopt = !!altId;
-    var _am2 = null;
-    for (var _ai2 = 0; _ai2 < mats.length; _ai2++) { if (mats[_ai2].id === altId) { _am2 = mats[_ai2]; break; } }
-    var nmTxt = canAdopt ? '<span class="t-link" onclick="openMaterialDetailModal(\'' + altId + '\')">' + escapeHtml(_am2 ? _am2.name : (sug.altName || '替代物料')) + '</span>' : escapeHtml(sug.altName || '无合适替代');
-    var briefTxt = canAdopt && _am2 ? '<div style="font-size:12px;color:var(--text-sub);margin-top:1px">' + pmxMatBrief(_am2) + '</div>' : '';
-    var adoptedNow = realIdx >= 0 && plan.missing[realIdx] && plan.missing[realIdx].adopted;
-    var btns = canAdopt ? pmxAltBtns(realIdx, altId, adoptedNow) : '<span class="badge badge-gray">无库存替代</span>';
-    html += '<div class="ai-plan-item" id="pmx-alt-sug-' + s + '" style="padding:8px 10px"><div class="p-name"><b>' + escapeHtml(showKw) + '</b>' +
-      '<div style="font-size:12.5px;color:var(--text-sub);margin-top:2px">→ ' + nmTxt + '（' + escapeHtml(sug.reason || '') + '）' + briefTxt + '</div></div>' +
-      btns +
-      '</div>';
+    resolved.push({
+      kw: sug.kw, n: sug.n, reason: sug.reason || '',
+      altId: altId || '', altName: _am ? _am.name : (sug.altName || ''),
+      altSnap: _am ? pmxMatSnap(_am) : null,                                       // 替代物料完整快照
+      bomSnap: (mi >= 0 && pending[mi]._f) ? pmxBomSnap(pending[mi]._f) : null      // 原 BOM 物料完整快照
+    });
   }
+  PMX._lastAltSugs = resolved;                 // 记住本次建议，供"返回建议"与历史查看用
+  await pmixAltSaveHistory(pending, resolved);   // 写入查找历史（保留一天，含完整字段快照）
+  PMX._altOpen = {};                           // 重置展开状态（默认全部展开，点标题可折叠）
   var mf = $('.modal-foot');
   if (mf) mf.innerHTML = '<button class="btn btn-primary" onclick="closeModal()">完成</button>';
-  var mb2 = $('.modal-body');
-  if (mb2) mb2.innerHTML = html;
+  pmixAltRenderLive();                         // 渲染建议列表（折叠展开的双框）
 }
 
 /* 类别词表：kw 里的类别词与候选物料类别冲突时禁止匹配（电容不能被 LED 替代） */
@@ -1569,7 +1605,7 @@ function rcTokens(x) {
 /* ============================================================
  * AI 查找替代历史（近 24 小时，仿图片识别历史）
  * ============================================================ */
-/* 保存一条查找历史（当时缺失项 + AI 建议 + 时间 + 操作人） */
+/* 保存一条查找历史（当时缺失项 + AI 建议 + 时间 + 操作人；含完整字段快照，退出后仍可查看） */
 async function pmixAltSaveHistory(missing, sugs) {
   try {
     await DB.put('pmix_alt_history', {
@@ -1577,14 +1613,15 @@ async function pmixAltSaveHistory(missing, sugs) {
       operator: (Auth.user ? Auth.user.username : '') || '',
       project: PMX.name || '',
       need: PMX.name || PMX.need || '',
-      missing: missing.map(function (ms) { return { kw: ms.kw, name: ms.name, detail: ms.detail, n: ms.n, adopted: !!ms.adopted }; }),
+      missing: missing.map(function (ms) { return { kw: ms.kw, name: ms.name, detail: ms.detail, n: ms.n, adopted: !!ms.adopted, f: pmxBomSnap(ms._f) }; }),
       sugs: sugs || []
     });
   } catch (e) { /* 历史不影响主流程 */ }
 }
 /* 历史列表（顺手清掉超过 24 小时的） */
 async function pmixAltShowHistory() {
-  if (!$('.modal-mask')) openModal('查找历史', '<div class="empty">加载中…</div>', '<button class="btn btn-primary" onclick="closeModal()">关闭</button>');  // 没有弹窗时自己开一个
+  if (!$('.modal-mask')) openModal('查找历史', '<div class="empty">加载中…</div>', '<button class="btn btn-primary" onclick="closeModal()">关闭</button>', true);  // 没有弹窗时自己开一个
+  PMX._altHistId = null;                                                           // 回到历史列表：退出明细视图
   var all = await DB.all('pmix_alt_history');
   all = all.filter(function (r) { return r.kind !== 'recog'; });                    // 识别历史独立、永久，不在此显示/清理
   var proj = PMX.name || '';
@@ -1614,59 +1651,77 @@ async function pmixAltShowHistory() {
   var mb = $('.modal-body');
   if (mb) mb.innerHTML = html;
 }
-/* 某条历史明细：建议 + 当前是否可再采用 */
-async function pmixAltShowDetail(id) {
-  var rec = await DB.get('pmix_alt_history', id);
-  if (!rec) { toast('记录不存在或已过期', 'warn'); return; }
-  var plan = PMX.plan || { items: [], missing: [] };   // 未配料时也能看历史
-  var html = '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">' +
-    '<b>' + ICONS.history + ' ' + escapeHtml(rec.need || '') + '</b>' +
-    '<button class="btn btn-sm btn-outline" onclick="pmixAltShowHistory()">返回历史</button></div>' +
-    '<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:8px">' + pmixFmtTime(rec.at) + ' · ' + escapeHtml(rec.operator || '') + '</div>';
-  var sugs = rec.sugs || [];
-  for (var s = 0; s < sugs.length; s++) {
-    var sg = sugs[s] || {};
-    var mi = -1;
-    for (var q = 0; q < plan.missing.length; q++) { if (aiKwHit(plan.missing[q].kw, sg.kw)) { mi = q; break; } }
-    var adopted = mi >= 0 ? !!plan.missing[mi].adopted : false;
-    var altOk = sg.altId && State.materials.some(function (x) { return x.id === sg.altId; });
-    var btn = '';
-    if (mi >= 0 && !adopted && altOk) btn = '<button class="btn btn-sm btn-primary" onclick="pmxAdoptAlt(' + mi + ',\'' + sg.altId + '\');pmixAltShowDetail(\'' + id + '\')">采用</button>';
-    else if (adopted) btn = '<button class="btn btn-sm btn-unadopt" onclick="pmxAltUnadoptHist(' + mi + ',\'' + id + '\')">不采用</button>';
-    else if (mi < 0) btn = '<span class="badge badge-gray">不在当前方案</span>';
-    else btn = '<span class="badge badge-gray">已无库存</span>';
-    html += '<div class="ai-plan-item" style="padding:8px 10px"><div class="p-name"><b>' + escapeHtml(String(sg.kw || '').split('|')[0]) + '</b>' +
-      '<div style="font-size:12.5px;color:var(--text-sub);margin-top:2px">→ ' + (altOk ? '<span class="t-link" onclick="openMaterialDetailModal(\'' + sg.altId + '\')">' + escapeHtml(sg.altName || '替代物料') + '</span>' : escapeHtml(sg.altName || '无合适替代')) + '（' + escapeHtml(sg.reason || '') + '）</div></div>' + btn + '</div>';
-  }
-  var mb = $('.modal-body');
-  if (mb) mb.innerHTML = html;
+/* 建议行的展开状态：默认展开（一进来就能看到全部参数），点标题可折叠 */
+function pmxAltRowOpen(key) {
+  PMX._altOpen = PMX._altOpen || {};
+  return PMX._altOpen[key] !== false;                          // 未手动折叠过 → 默认展开
 }
-/* 返回 AI 查找替代的建议列表视图（历史里返回按钮用） */
-function pmixAltShowList() {
+/* 单条替代建议：折叠头（原词 → 替代品 + 采用按钮） / 展开体（原 BOM 物料框 + 替代物料框） */
+function pmxAltSugRow(sg, s, mode) {
+  sg = sg || {};
+  var key = mode + ':' + s;                                    // 展开状态键（live / hist 各自独立）
+  var open = pmxAltRowOpen(key);
+  var plan = PMX.plan || { items: [], missing: [] };
+  var showKw = String(sg.kw || '').split('|')[0] || '?';
+  var mi = -1;
+  for (var q = 0; q < plan.missing.length; q++) { if (aiKwHit(plan.missing[q].kw, sg.kw)) { mi = q; break; } }
+  var liveM = null;                                            // 当前仓库里仍存在的替代物料（优先用实时数据）
+  for (var i = 0; i < State.materials.length; i++) { if (State.materials[i].id === sg.altId) { liveM = State.materials[i]; break; } }
+  var snap = liveM ? pmxMatSnap(liveM) : (sg.altSnap || null);
+  var adopted = mi >= 0 && !!plan.missing[mi].adopted;
+  var btns;
+  if (liveM && mi >= 0) btns = '<button class="btn btn-sm ' + (adopted ? 'btn-unadopt' : 'btn-primary') + '" onclick="pmxAltAdoptToggle(' + mi + ',\'' + liveM.id + '\')">' + (adopted ? '不采用' : '采用') + '</button>';
+  else if (mi < 0) btns = '<span class="badge badge-gray">不在当前方案</span>';
+  else if (snap) btns = '<span class="badge badge-gray">已无库存</span>';
+  else btns = '<span class="badge badge-gray">无库存替代</span>';
+  var origF = (mi >= 0 && plan.missing[mi]._f) ? plan.missing[mi]._f : (sg.bomSnap || null);
+  var head = '<div class="pmx-corr-head" onclick="pmxAltToggleRow(\'' + key + '\')">' +
+      '<span class="pmx-corr-caret">' + (open ? '▾' : '▸') + '</span>' +
+      '<b style="flex:none">' + escapeHtml(showKw) + '</b>' +
+      '<span class="pmx-corr-headsub">→ ' + escapeHtml((snap && snap.name) || sg.altName || '无合适替代') + (sg.reason ? '（' + escapeHtml(sg.reason) + '）' : '') + '</span>' +
+      '<span style="flex:none" onclick="event.stopPropagation()">' + btns + '</span>' +
+    '</div>';
+  var body = open ? '<div class="pmx-corr-body">' + pmxBomBoxHtml(origF, showKw) + pmxMatBoxHtml(snap) + '</div>' : '';
+  return '<div class="pmx-corr-row' + (open ? ' open' : '') + '">' + head + body + '</div>';
+}
+/* 展开 / 折叠某条建议 */
+function pmxAltToggleRow(key) {
+  PMX._altOpen = PMX._altOpen || {};
+  PMX._altOpen[key] = !pmxAltRowOpen(key);
+  pmixAltRefresh();
+}
+/* 刷新当前弹窗视图（建议列表 / 历史明细） */
+function pmixAltRefresh() {
+  if (!$('.modal-mask')) return;                               // 弹窗已关，无需刷新
+  if (PMX._altHistId) pmixAltShowDetail(PMX._altHistId);
+  else pmixAltRenderLive();
+}
+/* 渲染本次 AI 建议列表（弹窗内 / "返回建议"共用） */
+function pmixAltRenderLive() {
+  PMX._altHistId = null;                                       // 当前处于建议列表视图
   var el = $('.modal-body');
   if (!el) return;
   var sug = PMX._lastAltSugs || [];
   var html = '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">' +
-    '<div style="font-size:12.5px;color:var(--text-sub)">共 ' + sug.length + ' 条建议，点"采用"后加入左侧"已采用替代"区域</div>' +
-    '<button class="btn btn-sm btn-outline" onclick="pmixAltShowHistory()">' + ICONS.history + '查找历史（近 24 小时）</button></div>';
-  var plan2 = PMX.plan || { items: [], missing: [] };
-  for (var s = 0; s < sug.length; s++) {
-    var sg = sug[s] || {};
-    var mi = -1;
-    for (var q = 0; q < plan2.missing.length; q++) { if (aiKwHit(plan2.missing[q].kw, sg.kw)) { mi = q; break; } }
-    var realIdx = mi >= 0 ? mi : -1;
-    var showKw = mi >= 0 ? String(plan2.missing[mi].kw).split('|')[0] : (sg.kw || '?');
-    var altId = sg.altId && State.materials.some(function (x) { return x.id === sg.altId; }) ? sg.altId : fuzzyFindAlt(State.materials.filter(function (x) { return x.stock > 0; }), sg.altName);
-    var ms2x = realIdx >= 0 ? plan2.missing[realIdx] : null;
-    var adoptedNow2 = !!(ms2x && ms2x.adopted);
-    var useAltId = altId || (adoptedNow2 && ms2x.altItemIdx != null && plan2.items[ms2x.altItemIdx] ? plan2.items[ms2x.altItemIdx].material.id : '');
-    var btns2 = useAltId ? pmxAltBtns(realIdx, useAltId, adoptedNow2) : '<span class="badge badge-gray">无库存替代</span>';
-    html += '<div class="ai-plan-item" style="padding:8px 10px"><div class="p-name"><b>' + escapeHtml(showKw) + '</b>' +
-      '<div style="font-size:12.5px;color:var(--text-sub);margin-top:2px">→ ' + (useAltId ? '<span class="t-link" onclick="openMaterialDetailModal(\'' + useAltId + '\')">' + escapeHtml(sg.altName || '替代物料') + '</span>' : escapeHtml(sg.altName || '无合适替代')) + '（' + escapeHtml(sg.reason || '') + '）</div></div>' +
-      btns2 +
-      '</div>';
-  }
+    '<div style="font-size:12.5px;color:var(--text-sub)">共 ' + sug.length + ' 条建议，已展开原物料与替代物料全部参数（点标题可折叠）；点"采用"后加入左侧"已采用替代"区域</div>' +
+    '<button class="btn btn-sm btn-outline" onclick="pmixAltShowHistory()">' + ICONS.history + '查找历史（近 24 小时）</button></div>' +
+    '<div class="pmx-alt-list">' + sug.map(function (sg, s) { return pmxAltSugRow(sg, s, 'live'); }).join('') + '</div>';
   el.innerHTML = html;
+}
+/* 某条历史明细：建议列表（同样折叠展开，字段与识别时一致） */
+async function pmixAltShowDetail(id) {
+  var rec = await DB.get('pmix_alt_history', id);
+  if (!rec) { toast('记录不存在或已过期', 'warn'); return; }
+  PMX._altHistId = id;                                         // 当前处于历史明细视图
+  var sugs = rec.sugs || [];
+  var html = '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">' +
+    '<b>' + ICONS.history + ' ' + escapeHtml(rec.need || '') + '</b>' +
+    '<button class="btn btn-sm btn-outline" onclick="pmixAltShowHistory()">返回历史</button></div>' +
+    '<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:8px">' + pmixFmtTime(rec.at) + ' · ' + escapeHtml(rec.operator || '') + ' · 缺失 ' + (rec.missing || []).length + ' 种</div>';
+  if (!sugs.length) html += '<div class="empty">这条记录没有建议</div>';
+  else html += '<div class="pmx-alt-list">' + sugs.map(function (sg, s) { return pmxAltSugRow(sg, s, 'hist'); }).join('') + '</div>';
+  var mb = $('.modal-body');
+  if (mb) mb.innerHTML = html;
 }
 /* 时间格式化（本地） */
 function pmixFmtTime(t) {
@@ -1674,22 +1729,25 @@ function pmixFmtTime(t) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 
-/* 采用替代：缺失项标记 adopted（不从右列消失、置顶），替代物料进入左列"已采用替代"区 */
-function pmxAdoptAlt(missIdx, altId, sugIdx) {
-  var plan = PMX.plan;
-  var ms = plan.missing[missIdx];
-  var altM = null;
-  for (var i = 0; i < State.materials.length; i++) { if (State.materials[i].id === altId) { altM = State.materials[i]; break; } }
-  if (!ms || !altM || ms.adopted) return;
-  var it = { material: altM, needQty: ms.n, have: altM.stock, status: altM.stock >= ms.n ? 'ok' : (altM.stock > 0 ? 'low' : 'none'), why: '替代 ' + ms.kw, alt: true, altKw: String(ms.kw).split('|')[0], missIdx: missIdx };
-  plan.items.push(it);
-  ms.adopted = true;
-  ms.altItemIdx = plan.items.length - 1;
-  if (sugIdx !== undefined) {                                  // 弹窗保持打开，可继续采用其它建议
-    var el = document.getElementById('pmx-alt-sug-' + sugIdx);
-    if (el) el.innerHTML = '<div style="font-size:13px;color:var(--success);font-weight:600">✓ 已采用 ' + escapeHtml(altM.name) + '</div>';
+/* 采用 / 不采用替代：缺失项标记 adopted（不从右列消失、置顶），替代物料进入左列"已采用替代"区；点完就地刷新弹窗 */
+function pmxAltAdoptToggle(mi, altId) {
+  var plan = PMX.plan, ms = plan && plan.missing[mi];
+  if (!ms) return;
+  if (ms.adopted) {                                            // 已采用 → 撤回
+    if (ms.altItemIdx != null && plan.items[ms.altItemIdx]) {
+      plan.items.splice(ms.altItemIdx, 1);
+      ms.adopted = false; ms.altItemIdx = undefined;
+      plan.items.forEach(function (it2, i) { if (it2.alt && it2.missIdx >= 0) { var m2 = plan.missing[it2.missIdx]; if (m2) m2.altItemIdx = i; } });
+    }
+  } else {                                                     // 未采用 → 采用
+    var altM = null;
+    for (var i = 0; i < State.materials.length; i++) { if (State.materials[i].id === altId) { altM = State.materials[i]; break; } }
+    if (!altM) { toast('该替代物料已不存在', 'err'); return; }
+    plan.items.push({ material: altM, needQty: ms.n, have: altM.stock, status: altM.stock >= ms.n ? 'ok' : (altM.stock > 0 ? 'low' : 'none'), why: '替代 ' + ms.kw, alt: true, altKw: String(ms.kw).split('|')[0], missIdx: mi });
+    ms.adopted = true; ms.altItemIdx = plan.items.length - 1;
   }
   pmxRenderPlan();
+  pmixAltRefresh();
 }
 
 /* 撤回替代：从"已采用替代"移除该替代项，原物料回到"库里没有"，可重新查找/采用 */
@@ -1708,48 +1766,6 @@ function pmxUnadoptAlt(itemIdx) {
     }
   }
   pmxRenderPlan();
-}
-
-/* 采用 / 不采用 双态按钮（建议弹窗与返回建议共用） */
-function pmxAltBtns(missIdx, altId, adopted) {
-  return '<span class="pmx-alt-btns" style="flex-shrink:0;display:flex;align-items:center">' +
-    '<button class="btn btn-sm btn-primary pmx-btn-adopt" style="' + (adopted ? 'display:none' : '') + '" onclick="pmxAltToggle(' + missIdx + ',\'' + altId + '\',this,1)">采用</button>' +
-    '<button class="btn btn-sm btn-unadopt pmx-btn-unadopt" style="' + (adopted ? '' : 'display:none') + '" onclick="pmxAltToggle(' + missIdx + ',\'\',this,0)">不采用</button>' +
-  '</span>';
-}
-/* 切换采用状态：采用=push alt 项；不采用=splice；随后只切换这两个按钮，不重建整条 */
-async function pmxAltToggle(missIdx, altId, btnEl, adopt) {
-  var plan = PMX.plan, ms = plan.missing[missIdx];
-  if (!ms) return;
-  if (adopt) {
-    var altM = null;
-    State.materials.forEach(function (m) { if (m.id === altId) altM = m; });
-    if (!altM || ms.adopted) return;
-    var it = { material: altM, needQty: ms.n, have: altM.stock, status: altM.stock >= ms.n ? 'ok' : (altM.stock > 0 ? 'low' : 'none'), why: '替代 ' + ms.kw, alt: true, altKw: String(ms.kw).split('|')[0], missIdx: missIdx };
-    plan.items.push(it);
-    ms.adopted = true; ms.altItemIdx = plan.items.length - 1;
-  } else {
-    if (ms.altItemIdx == null || !plan.items[ms.altItemIdx]) return;
-    plan.items.splice(ms.altItemIdx, 1);
-    ms.adopted = false; ms.altItemIdx = undefined;
-    plan.items.forEach(function (it2, i) { if (it2.alt && it2.missIdx >= 0) { var m2 = plan.missing[it2.missIdx]; if (m2) m2.altItemIdx = i; } });
-  }
-  var wrap = btnEl.parentNode;
-  var a = wrap.querySelector('.pmx-btn-adopt'), u = wrap.querySelector('.pmx-btn-unadopt');
-  if (a) a.style.display = adopt ? 'none' : '';
-  if (u) u.style.display = adopt ? '' : 'none';
-  pmxRenderPlan();
-}
-/* 查找历史明细里撤回替代，撤回后刷新该明细 */
-async function pmxAltUnadoptHist(mi, histId) {
-  var plan = PMX.plan, ms = plan.missing[mi];
-  if (ms && ms.altItemIdx != null && plan.items[ms.altItemIdx]) {
-    plan.items.splice(ms.altItemIdx, 1);
-    ms.adopted = false; ms.altItemIdx = undefined;
-    plan.items.forEach(function (it2, i) { if (it2.alt && it2.missIdx >= 0) { var m2 = plan.missing[it2.missIdx]; if (m2) m2.altItemIdx = i; } });
-  }
-  pmxRenderPlan();
-  pmixAltShowDetail(histId);
 }
 
 /* ============================================================
