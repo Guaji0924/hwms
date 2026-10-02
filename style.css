@@ -536,7 +536,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; } /* 表�
 .tl-item.tl-consume::before { background: #ea580c; }                          /* 消耗橙点 */
 .tl-item.tl-borrow::before { background: #7c3aed; }                           /* 借出紫点 */
 .tl-item.tl-return::before { background: #0d9488; }                          /* 归还青点 */
-.tl-item.tl-adjust::before { background: #94a3b8; }                           /* 调整灰点 */
+.tl-item.tl-adjust::before { background: var(--primary); }                    /* 调整主题色点（与"库存调整"徽章一致） */
 .tl-item.tl-revoke::before { background: #dc2626; }                           /* 撤回冲销红点 */
 .badge-jump { outline: 1px dashed currentColor; cursor: pointer; }           /* 可点击跳转徽章（虚线框+箭头，颜色由内联样式指定） */
 .badge-jump:hover { filter: brightness(.85); }                               /* 悬停加深 */
