@@ -341,8 +341,10 @@ async function pmxRenderPlan() {
       '<div style="display:flex;flex-direction:column">' +
         '<div class="card pmx-col-card" style="margin-bottom:0"><div class="card-title">库里没有（' + plan.missing.length + '）' +
           '<div class="pmx-head-btns">' +
-            (plan.missing.length ? '<button class="btn btn-sm btn-outline" onclick="pmxFindAlt()">' + ICONS.ai + 'AI 查找替代</button>' : '') +
-            (PMX.source === 'bom' ? '<button class="btn btn-sm btn-outline" onclick="pmixAltShowHistory()">' + ICONS.history + '查找历史</button>' : '') +
+            (plan.missing.length
+              ? '<button class="btn btn-sm btn-outline" onclick="pmxFindAlt()">' + ICONS.ai + 'AI 查找替代</button>' +
+                '<button class="btn btn-sm btn-outline" onclick="pmixAltShowHistory()">' + ICONS.history + '查找历史</button>'
+              : '') +
           '</div></div>' +
           '<div class="pmx-scroll pmx-scroll-miss" style="height:320px;flex:none">' + missRows + '</div></div>' +
           altZone +
@@ -1934,9 +1936,8 @@ function pmixAltRenderLive() {
   var el = $('.modal-body');
   if (!el) return;
   var sug = PMX._lastAltSugs || [];
-  var html = '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px">' +
-    '<div style="font-size:12.5px;color:var(--text-sub)">共 ' + sug.length + ' 条建议（点标题展开原 BOM 物料 / 替代物料；替代物料点名称可看档案）；点"采用"后加入左侧"已采用替代"区域</div>' +
-    '<button class="btn btn-sm btn-outline" onclick="pmixAltShowHistory()">' + ICONS.history + '查找历史（近 24 小时）</button></div>' +
+  /* 这里不再放"查找历史"按钮：页面上已有入口（见 pmixAltShowHistory 的调用处），避免重复 */
+  var html = '<div style="font-size:12.5px;color:var(--text-sub);margin-bottom:10px">共 ' + sug.length + ' 条建议（点标题展开原 BOM 物料 / 替代物料；替代物料点名称可看档案）；点"采用"后加入左侧"已采用替代"区域</div>' +
     '<div class="pmx-alt-list">' + sug.map(function (sg, s) { return pmxAltSugRow(sg, s, 'live'); }).join('') + '</div>';
   el.innerHTML = html;
 }
