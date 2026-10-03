@@ -173,28 +173,37 @@ async function pmxRenderPlan() {
   var isSaved = !!PMX.projId;                        // 是否已保存的历史项目
   var canOp = isAdminNow() || (PMX.operator && PMX.operator === Auth.user.username); // 可改项目信息
 
-  /* 根据当前份数重新计算每个物料的充足状态（需要 × 份数后与库存比较） */
+  /* 根据当前份数重新计算每个物料的充足状态（需要 × 份数后与库存比较）
+     已采用替代的也要一起算：份数调大后替代料同样可能不够，要能提示出来 */
   for (var i00 = 0; i00 < plan.items.length; i00++) {
     var _e = plan.items[i00];
     var _m = _e.material;
-    if (_e.alt) { /* 已采用替代的保持 alt 分类，不重新判断 */ continue; }
     var actualNeed = (_e.needQty || 0) * PMX.copies;
     _e.status = _m.stock >= actualNeed ? 'ok' : (_m.stock > 0 ? 'low' : 'none');
   }
 
-  /* items 拆：库里有（充足）/ 库里不够（数量不足）/ 已采用替代（充足） */
+  /* items 拆：库里有（充足）/ 库里不够（数量不足）/ 已采用替代
+     已采用替代的不管够不够都留在"已采用替代"区（它记的是决策归属），
+     不够的在区内置顶并标红，避免同一行在两个列表里重复出现 */
   var okIt = [], lowIt = [], altIt = [];
   for (var i0 = 0; i0 < plan.items.length; i0++) {
     var _it = plan.items[i0];
-    if (_it.status === 'low' || _it.status === 'none') lowIt.push(_it);
-    else if (_it.alt) altIt.push(_it);
+    if (_it.alt) altIt.push(_it);
+    else if (_it.status === 'low' || _it.status === 'none') lowIt.push(_it);
     else okIt.push(_it);
   }
+  /* 已采用替代区内排序：不足的置顶（none → low → 充足），同状态保持原有先后 */
+  var _altRank = { none: 0, low: 1, ok: 2 };
+  altIt.sort(function (a, b) { return (_altRank[a.status] || 0) - (_altRank[b.status] || 0); });
+  var altShortN = 0;                                          // 已采用替代里按当前份数仍不够的条数
+  for (var as = 0; as < altIt.length; as++) { if (altIt[as].status === 'low' || altIt[as].status === 'none') altShortN++; }
 
   /* 统一行布局：左(checkbox+名称+位置) | 右(代替标签内容宽 + 单份合计现有 + 出库按钮) */
   function pmxRowHtml(it, rowId, showChk) {
     var m = it.material;
     var canOut = m.stock > 0;
+    /* 已采用替代但库存不足：整行红色高亮（常驻，与 rec-flash 的跳转闪动区分开） */
+    var isShort = it.alt && (it.status === 'low' || it.status === 'none');
     var altTag = it.alt && it.missIdx >= 0
       ? '<span class="badge badge-green" style="cursor:pointer;max-width:100%" title="跳到原物料" onclick="pmxFlashById(\'pmx-miss-' + it.missIdx + '\')">代替：' + escapeHtml(it.altKw) + ' ↗</span>'
       : '';
@@ -209,14 +218,14 @@ async function pmxRenderPlan() {
         }
       }
     }
-    return '<div class="ai-plan-item" style="position:relative"' + (rowId ? ' id="' + rowId + '"' : '') + '>' + corrBadge +
+    return '<div class="ai-plan-item' + (isShort ? ' pmx-alt-short' : '') + '" style="position:relative"' + (rowId ? ' id="' + rowId + '"' : '') + '>' + corrBadge +
       (showChk ? '<input type="checkbox" class="pmx-chk" data-mid="' + m.id + '"' + (canOut ? ' checked' : ' disabled') + ' />' : '') +
       '<div class="p-name" style="flex:1;min-width:0"><span class="t-link" onclick="gotoMaterial(\'' + m.id + '\')">' + escapeHtml(m.name) + '</span>' +
         (m.model || m.pkg ? '<div style="margin-top:2px;font-size:12px;color:var(--text-sub)">' + escapeHtml([m.model, m.pkg].filter(function (x) { return x; }).join(' · ')) + '</div>' : '') +
         '<div style="margin-top:3px">' + pmxLocBadge(m.id, m.loc, m.locNo) + '</div></div>' +
       '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">' +
         altTag +
-        '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:12.5px;white-space:nowrap">单份 <b>' + it.needQty + '</b> · 合计 <b class="pmx-line-total" data-q="' + it.needQty + '">' + (it.needQty * PMX.copies) + '</b> · 现有 ' + m.stock + '</span></div>' +
+        '<div style="display:flex;align-items:center;gap:8px"><span class="' + (isShort ? 'pmx-qty-warn' : '') + '" style="font-size:12.5px;white-space:nowrap">单份 <b>' + it.needQty + '</b> · 合计 <b class="pmx-line-total" data-q="' + it.needQty + '">' + (it.needQty * PMX.copies) + '</b> · 现有 ' + m.stock + '</span></div>' +
       '</div>' +
       '</div>';
   }
@@ -229,19 +238,19 @@ async function pmxRenderPlan() {
   for (var j = 0; j < okIt.length; j++) haveRows += itemRow(okIt[j]);
   if (!okIt.length) haveRows = '<div class="empty">库里没有匹配到相关物料</div>';
 
-  /* 左列：库里不够（始终显示，数量不足的都在这里，含替代后仍不够的） */
+  /* 左列：库里不够（未采用替代、但数量不足的；已采用替代的留在下方"已采用替代"区标红，不重复列出） */
   var lowRows = '';
   for (var l0 = 0; l0 < lowIt.length; l0++) {
     var li = -1;
     for (var lf = 0; lf < plan.items.length; lf++) { if (plan.items[lf] === lowIt[l0]) { li = lf; break; } }
     lowRows += lowRow(lowIt[l0], li >= 0 ? 'pmx-alt-' + li : '');
   }
-  if (!lowIt.length) lowRows = '<div class="empty">还没有数量不足的物料</div>';
+  if (!lowIt.length) lowRows = '<div class="empty">' + (altShortN ? '本区没有；另有 ' + altShortN + ' 项已采用替代的库存不足（见下方"已采用替代"）' : '还没有数量不足的物料') + '</div>';
   var lowZone = '<div class="card pmx-col-card" style="margin:16px 0 0"><div class="card-title">库里不够（' + lowIt.length + '）' +
           '<div class="pmx-head-btns"><button class="btn btn-sm btn-blue" onclick="pmxClaim()">' + ICONS.out + '出库</button></div></div>' +
         '<div class="pmx-scroll pmx-scroll-have" style="height:320px;flex:none">' + lowRows + '</div></div>';
 
-  /* 左列下方：已采用替代（充足，一直显示，N=0 给空提示） */
+  /* 左列下方：已采用替代（一直显示，N=0 给空提示；不足的已置顶并标红） */
   var altRows = '';
   for (var a2 = 0; a2 < altIt.length; a2++) {
     var ai2 = -1;
@@ -249,7 +258,7 @@ async function pmxRenderPlan() {
     altRows += itemRow(altIt[a2], 'pmx-alt-' + ai2);
   }
   if (!altIt.length) altRows = '<div class="empty">还没有采用替代物料</div>';
-  var altZone = '<div class="card pmx-col-card" style="margin:16px 0 0"><div class="card-title">已采用替代（' + altIt.length + '）' +
+  var altZone = '<div class="card pmx-col-card" style="margin:16px 0 0"><div class="card-title">已采用替代（' + altIt.length + (altShortN ? ' · ' + altShortN + ' 项不足' : '') + '）' +
           '<div class="pmx-head-btns"><button class="btn btn-sm btn-blue" onclick="pmxClaim()">' + ICONS.out + '出库</button></div></div>' +
         '<div class="pmx-scroll pmx-scroll-alt" style="height:320px;flex:none">' + altRows + '</div></div>';
 
@@ -2264,7 +2273,8 @@ function pmxExportPick() {
   }
   var lows = pmxLowItems();
   if (lows.length) {
-    openModal('加入取件清单？', '默认导出库里有的和已采用代替的物料。<br>还有 <b>' + lows.length + '</b> 种库存不足（库里不够），是否把它们也加进取件清单？',
+    openModal('加入取件清单？', '默认导出库里有的和已采用代替的物料。<br>还有 <b>' + lows.length + '</b> 种库存不足（库里不够），是否把它们也加进取件清单？' +
+      '<div style="margin-top:8px;color:var(--text-sub);font-size:12.5px">注：已采用替代、但按当前份数仍不够的物料，也归在这里一并统计。</div>',
       '<button class="btn" onclick="closeModal();pmxExportPickDo(false,false)">不加</button><button class="btn btn-primary" onclick="closeModal();pmxExportPickDo(true,false)">加入</button>');
     return;
   }
@@ -2305,7 +2315,8 @@ function pmxExportBuy() {
   openModal('导出购买清单',
     '默认导出库里没有的物料，可勾选追加其他情况。<div style="margin-top:10px;line-height:2.2">' +
     '<label style="display:block"><input type="checkbox" id="buy-add-low" /> 将库里不够的物料也加入购买清单</label>' +
-    '<label style="display:block"><input type="checkbox" id="buy-add-rep" /> 将被代替的物料也加入购买清单</label></div>',
+    '<label style="display:block"><input type="checkbox" id="buy-add-rep" /> 将被代替的物料也加入购买清单</label></div>' +
+    '<div style="margin-top:8px;color:var(--text-sub);font-size:12.5px">注：已采用替代、但按当前份数仍不够的物料，会并入"库里不够"一并统计，建议数量按差额算。</div>',
     '<button class="btn" onclick="closeModal()">取消</button>' +
     '<button class="btn btn-primary" onclick="pmxExportBuyDo(!!(document.getElementById(\'buy-add-low\')&&document.getElementById(\'buy-add-low\').checked), !!(document.getElementById(\'buy-add-rep\')&&document.getElementById(\'buy-add-rep\').checked));closeModal()">导出</button>');
 }
