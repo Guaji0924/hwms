@@ -209,12 +209,6 @@ async function pmxRenderPlan() {
         }
       }
     }
-    /* 普通成员：不可见"库里不够"行的入库按钮（管理员仍保留完整操作权） */
-    var picked = PMX.pickMarks && PMX.pickMarks[m.id];
-    var inBtn = (isAdminNow() && (it.status === 'low' || it.status === 'none'))
-      ? (picked ? '<span class="badge badge-green" style="font-size:12px">已入取件清单</span>'
-          : '<button class="btn btn-sm btn-success" onclick="pmxPickIn(\'' + m.id + '\')">入库</button>')
-      : '';
     return '<div class="ai-plan-item" style="position:relative"' + (rowId ? ' id="' + rowId + '"' : '') + '>' + corrBadge +
       (showChk ? '<input type="checkbox" class="pmx-chk" data-mid="' + m.id + '"' + (canOut ? ' checked' : ' disabled') + ' />' : '') +
       '<div class="p-name" style="flex:1;min-width:0"><span class="t-link" onclick="gotoMaterial(\'' + m.id + '\')">' + escapeHtml(m.name) + '</span>' +
@@ -222,7 +216,6 @@ async function pmxRenderPlan() {
         '<div style="margin-top:3px">' + pmxLocBadge(m.id, m.loc, m.locNo) + '</div></div>' +
       '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">' +
         altTag +
-        inBtn +
         '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:12.5px;white-space:nowrap">单份 <b>' + it.needQty + '</b> · 合计 <b class="pmx-line-total" data-q="' + it.needQty + '">' + (it.needQty * PMX.copies) + '</b> · 现有 ' + m.stock + '</span></div>' +
       '</div>' +
       '</div>';
@@ -2211,18 +2204,6 @@ function pmxClaimNoSave() { closeModal(); toast('已出库（未保存项目）'
 /* 库里不够的物料（数量不足，含已采用替代后仍不够的） */
 function pmxLowItems() {
   return PMX.plan.items.filter(function (it) { return it.status === 'low' || it.status === 'none'; });
-}
-/* 普通成员：点"入库"看位置（不标记清单）；点"出库"的物料进取件清单 */
-function pmxPickIn(id) {
-  pmxRenderPlan();
-  openStockIOModal(id, 'in');
-}
-/* 点"出库"即视为要领用，标记进取件清单（普通成员导出取件清单按此） */
-function pmxPickOut(id) {
-  if (!PMX.pickMarks) PMX.pickMarks = {};
-  PMX.pickMarks[id] = true;
-  pmxRenderPlan();
-  openStockIOModal(id, 'out');
 }
 /* 导出取件清单：普通成员默认直接导出点过"出库"的（弹窗提示）；其他人默认导出库里有+已采用代替，弹卡询问是否加库里不够 */
 function pmxExportPick() {
