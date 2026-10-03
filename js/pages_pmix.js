@@ -1494,6 +1494,45 @@ function pmxMountOk(want, got) { return !want || !got || want === got; }
 /* ============================================================
  * AI 查找替代元件（弹窗内显示进度与建议；已采用替代的跳过）
  * ============================================================ */
+/* 已保存的项目：把问答记录静默写回数据库（仅项目创建者/管理员，避免改动他人项目） */
+async function pmxChatPersist() {
+  if (!PMX.projId) return;                                                      // 还没保存过：等用户点"保存"时随项目一起写
+  if (!(isAdminNow() || (PMX.operator && PMX.operator === Auth.user.username))) return;   // 无编辑权限：不动他人项目
+  var pj = await DB.get('ai_projects', PMX.projId);
+  if (!pj) return;
+  pj.chat = PMX.chat; pj.updatedAt = Date.now();                                // 只更新问答字段，不碰其它未保存改动
+  await DB.put('ai_projects', pj);
+}
+/* 把"AI 查找替代"这次交互记入项目 AI 问答区（用户提问 + 替代建议清单），
+   这样它和普通追问一样会出现在"AI 问答"里，保存项目后长期保留 */
+async function pmxAltLogChat(missInfo, pending, resolved) {
+  PMX.chat.push({ role: 'user', content: 'AI 查找替代：为 ' + missInfo.length + ' 种缺失物料（共 ' + pending.length + ' 处）查找仓库里的替代元件' });
+  var lines = [];
+  for (var i = 0; i < resolved.length; i++) {
+    var sg = resolved[i] || {};
+    var bs = sg.bomSnap || {};                                                  // 原 BOM 物料（识别出的字段）
+    var ops = [];
+    if (bs.model) ops.push(bs.model);
+    if (bs.pkg) ops.push(bs.pkg);
+    if (bs.v) ops.push(bs.v);
+    var orig = (sg.kw || bs.name || '未知物料') + (ops.length ? '（' + ops.join(' · ') + '）' : '') + ' ×' + (sg.n || 1);
+    if (sg.altSnap) {                                                           // 找到替代：写明替代品名称与型号·封装
+      var as = sg.altSnap, aps = [];
+      if (as.model) aps.push(as.model);
+      if (as.pkg) aps.push(as.pkg);
+      lines.push((i + 1) + '. ' + orig + ' → 替代：' + (as.name || sg.altName || '') + (aps.length ? '（' + aps.join(' · ') + '）' : '') + (sg.reason ? ' — ' + sg.reason : ''));
+    } else {
+      lines.push((i + 1) + '. ' + orig + ' → 仓库里没有合适的替代');
+    }
+  }
+  var aiTxt = resolved.length
+    ? 'AI 替代建议（共 ' + resolved.length + ' 种）：\n' + lines.join('\n') + '\n\n在弹窗里点"采用"即可把替代物料加入配料清单。'
+    : 'AI 没有从仓库里找到合适的替代元件。';
+  PMX.chat.push({ role: 'assistant', content: aiTxt });
+  var box = $('#pmx-chat-box');                                                 // 直接刷新问答区（不整页重绘，避免影响正在打开的弹窗）
+  if (box) { box.innerHTML = pmxChatBubbles(); box.scrollTop = box.scrollHeight; }
+  await pmxChatPersist();
+}
 async function pmxFindAlt() {
   var plan = PMX.plan;
   /* 只对还没采用替代的缺失物料查找（记下它在 plan.missing 里的下标，供整组采用用） */
@@ -1555,6 +1594,11 @@ async function pmxFindAlt() {
     return m.id + '|' + ps.join('|');
   }
   var libTxt = cand.map(matLine).join('\n') || '（仓库是空的）';
+  /* 把之前的对话（含上一次的替代结果）一起发给 AI，让它记得自己给过的替代建议 */
+  var historyMsgs = [];
+  for (var hh = 0; hh < PMX.chat.length; hh++) {
+    historyMsgs.push({ role: PMX.chat[hh].role, content: PMX.chat[hh].content });
+  }
 
   var BATCH = 10;
   var estMin = Math.ceil(Math.ceil(missInfo.length / BATCH) * 2.5);   /* 串行每批约 2.5 分钟（实测），按批数估算 */
@@ -1592,9 +1636,9 @@ async function pmxFindAlt() {
       '4) 电阻/电容/电感/晶振的标称值必须一致（10K 只能替 10K，100nF 只能替 100nF）；\n' +
       '5) 找不到合适替代就返回 altId 为空字符串，不要硬凑。\n' +
       'altId 必须是上面仓库清单里竖线|之前的 id 原样返回，绝不可编造。\n' +
-      '只返回 JSON 数组：[{"id":缺失物料的#编号(数字),"altId":"仓库物料id或空","altName":"替代品名称或空","reason":"15字内理由"}]，不要任何其他文字。';
+      '只返回 JSON 数组：[{"id":缺失物料的#编号(数字),"altId":"仓库物料id或空","altName":"替代品名称或空","reason":"说明为什么能替代（参数/封装/功能哪里一致），30字以内"}]，不要任何其他文字。';
     try {
-      var reply = await aiCallRetry([{ role: 'user', content: sys }], cfg);
+      var reply = await aiCallRetry(historyMsgs.concat([{ role: 'user', content: sys }]), cfg);
       var arr = extractJSONArray(String(reply)) || [];
       all = all.concat(arr);
     } catch (e) { /* 单批失败不阻断 */ }
@@ -1603,6 +1647,7 @@ async function pmxFindAlt() {
   }
   if (window._aiAbort) { toast('AI 查找替代已中止', 'warn'); return; }  // 被中止，不应用结果
   if (!all.length) {
+    await pmxAltLogChat(missInfo, pending, []);                   // 一条都没找到也记一笔，方便在 AI 问答里回看
     var mbn = $('.modal-body');
     if (mbn) mbn.innerHTML = '<div class="empty">AI 没有返回可用建议</div>';
     return;
@@ -1641,6 +1686,7 @@ async function pmxFindAlt() {
   for (var ri = 0; ri < missInfo.length; ri++) { if (byMi[ri]) resolved.push(byMi[ri]); }   // 按缺料原顺序输出
   PMX._lastAltSugs = resolved;                 // 记住本次建议，供"返回建议"与历史查看用
   await pmixAltSaveHistory(pending.map(function (x) { return x.ms; }), resolved);   // 写入查找历史（保留一天，含完整字段快照）
+  await pmxAltLogChat(missInfo, pending, resolved);   // 同步记入项目 AI 问答（用户提问 + 建议清单），保存项目后长期保留
   PMX._altOpen = {};                           // 重置展开状态（默认全部展开，点标题可折叠）
   var mf = $('.modal-foot');
   if (mf) mf.innerHTML = '<button class="btn btn-primary" onclick="closeModal()">完成</button>';
@@ -2265,8 +2311,22 @@ function pmxExportBuy() {
 }
 function pmxExportBuyDo(addLow, addReplaced) {
   var name = PMX.name || '项目';
-  var lines = ['物料名称,建议数量,备注'];
+  var lines = ['物料名称,型号,封装,标称值,位号,立创编号,厂家型号,建议数量,备注'];
   var plan = PMX.plan;
+  /* 拼一行：优先用 BOM 识别出来的字段（_f，和原表一致），缺的用库内档案（m）兜底，保证照着就能买 */
+  function buyRow(f, m, nmFallback, qty, note) {
+    var f2 = f || {}, m2 = m || {};
+    var txt = [
+      nmFallback || f2.name || m2.name || '',    // 物料名称（优先用界面显示的那个名字，如手选后的"排母（8P 2.54mm）"）
+      f2.model || m2.model || '',                // 型号
+      f2.pkg || m2.pkg || '',                    // 封装
+      f2.v || '',                                // 标称值（阻值/容值/频率等）
+      f2.des || '',                              // 位号（R1、C3…）
+      f2.code || m2.code || '',                  // 立创编号（可直接拿去商城搜）
+      f2.mfr || ''                               // 厂家型号（完整 MPN）
+    ].map(function (x) { return '"' + escapeCsv(x) + '"'; }).join(',');
+    return txt + ',' + qty + ',"' + escapeCsv(note || '') + '"';   // 数量保持数字，不套引号
+  }
   var groups = [];
   /* 1) 库里没有（未采用替代的缺料） */
   var grpMiss = [];
@@ -2274,7 +2334,7 @@ function pmxExportBuyDo(addLow, addReplaced) {
     var ms = plan.missing[i];
     if (ms.adopted) continue;
     var nmB = (ms.detail && ms.detail !== ms.name) ? ms.detail : (ms.name || String(ms.kw || '').split('|')[0]);   // detail 已含名称，避免重复
-    grpMiss.push('"' + escapeCsv(nmB.replace(/"/g, '""')) + '",' + (ms.n * PMX.copies) + ',"库里没有"');
+    grpMiss.push(buyRow(ms._f, ms._lib, nmB, ms.n * PMX.copies, '库里没有'));
   }
   if (grpMiss.length) groups.push(grpMiss);
   /* 2) 被代替（勾选才加） */
@@ -2286,7 +2346,7 @@ function pmxExportBuyDo(addLow, addReplaced) {
       var nmR = (ms2.detail && ms2.detail !== ms2.name) ? ms2.detail : (ms2.name || String(ms2.kw || '').split('|')[0]);
       var repName = '？';
       if (ms2.altItemIdx !== undefined && plan.items[ms2.altItemIdx]) repName = plan.items[ms2.altItemIdx].material.name;
-      grpRep.push('"' + escapeCsv(nmR.replace(/"/g, '""')) + '",' + (ms2.n * PMX.copies) + ',"被代替（用 ' + escapeCsv(repName) + ' 代替）"');
+      grpRep.push(buyRow(ms2._f, ms2._lib, nmR, ms2.n * PMX.copies, '被代替（用 ' + repName + ' 代替）'));
     }
     if (grpRep.length) groups.push(grpRep);
   }
@@ -2296,10 +2356,9 @@ function pmxExportBuyDo(addLow, addReplaced) {
     var lows = pmxLowItems();
     for (var l2 = 0; l2 < lows.length; l2++) {
       var it = lows[l2], m = it.material;
-      var nmL = (m.name || '') + (m.model ? ' ' + m.model : '');
       var needT = (it.needQty * PMX.copies) - m.stock;
       if (needT < 1) needT = 1;
-      grpLow.push('"' + escapeCsv(nmL.replace(/"/g, '""')) + '",' + needT + ',"库里不够（现有 ' + m.stock + '）"');
+      grpLow.push(buyRow(it._f, m, m.name || '', needT, '库里不够（现有 ' + m.stock + '）'));
     }
     if (grpLow.length) groups.push(grpLow);
   }

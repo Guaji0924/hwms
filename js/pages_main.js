@@ -529,12 +529,6 @@ function mfSubCustom() {
   $('#mf-sub2').style.display = (v === '自定义') ? 'block' : 'none';  // 显隐输入框
 }
 
-/* 单位下拉选"自定义"时显示自定义输入框 */
-function mfUnitCustom() {
-  var v = $('#mf-unit').value;                                      // 当前单位选择
-  $('#mf-unit2').style.display = (v === '自定义') ? 'block' : 'none';  // 显示/隐藏自定义输入框
-}
-
 /* ===== 存放位置组合框 ===== */
 var MF_LOC_OPTS = ['货架', '货柜'];
 /* 打开/关闭下拉菜单 */
@@ -1098,22 +1092,6 @@ function mdmClose() {
   if (prev) prev.style.display = '';
 }
 
-/* 详情卡片继续出入库：移除全部弹窗（含来源弹窗），打开出入库弹窗 */
-function mdmGo(t) {
-  var id = MDMState.id;
-  var masks = document.querySelectorAll('.modal-mask');
-  for (var i = 0; i < masks.length; i++) masks[i].remove();
-  ModalSnapshot = null;
-  openStockIOModal(id, t);
-}
-function mdmGoEdit() {
-  var id = MDMState.id;
-  var masks = document.querySelectorAll('.modal-mask');
-  for (var i = 0; i < masks.length; i++) masks[i].remove();
-  ModalSnapshot = null;
-  openMaterialForm(id);
-}
-
 /* 大图查看弹窗：点击详情页缩略图时打开 */
 function matPhotoView(id, idx) {
   var m = null;                                                      // 找目标物料
@@ -1378,9 +1356,7 @@ var quickPicked = null;                                                         
 
 /* 详情页"返回"按钮文字：按来源页显示（其余情况显示"返回"） */
 function detailBackLabel() {
-  if (LastFrom === 'ai') return '返回智能配料';
   if (LastFrom === 'stats') return '返回统计报表';
-  if (LastFrom === 'project') return '返回项目领料';
   if (LastFrom === 'history') return '返回历史追溯';
   if (LastFrom === 'alerts') return '返回库存预警';
   if (LastFrom === 'stockio') return '返回出入库登记';
@@ -1661,145 +1637,7 @@ async function exportRestockList() {
   toast('补货清单已导出（' + alerts.length + ' 种物料，约 ' + fmtMoney(total) + '）', 'ok');                 // 成功
 }
 
-/* ==================== 8. 项目领料：按历史项目一键再来一份 ==================== */
-
-/* 项目领料页：选一个以前的项目，把它上次领用的物料批量再出一份 */
-async function pageProjectPick() {
-  var records = await State.loadRecords();                              // 全部记录
-  var projSet = {};                                                     // 历史项目去重
-  for (var i = 0; i < records.length; i++) {
-    if (records[i].project) projSet[records[i].project] = 1;
-  }
-  var opts = '<option value="">-- 请选择项目 --</option>';
-  for (var p in projSet) opts += '<option value="' + escapeHtml(p) + '">' + escapeHtml(p) + '</option>';
-  $('#page').innerHTML =
-    '<div class="page-head"><div><div class="page-title">项目领料</div><div class="page-desc">选一个以前办过的项目，把它上次领用的物料一键再领一份（批量出库）</div></div></div>' +
-    '<div class="card">' +
-      '<div class="form-item" style="display:flex;flex-direction:row;align-items:center;gap:10px;margin-bottom:0"><label style="flex:none;margin:0">选择项目</label>' +
-        '<select class="select" id="pp-proj" style="max-width:360px" onchange="ppLoad()">' + opts + '</select>' +
-        '<div style="margin-left:auto;text-align:right">' +
-          '<button class="btn btn-outline" onclick="$(\'#bom-file\').click()">' + ICONS.upload + '导入嘉立创 BOM</button>' +
-          '<div style="font-size:12px;color:var(--text-sub);margin-top:6px">可把文件直接拖进页面导入</div>' +
-        '</div>' +
-        '<input type="file" id="bom-file" accept=".csv,.txt,.xlsx,.xls" style="display:none" onchange="bomImport(this)" />' +
-      '</div>' +
-      '<div id="pp-list" style="margin-top:14px"><div class="form-hint">选择项目后，这里会列出该项目上次领用的物料清单，数量可改，勾选后一键出库。</div></div>' +
-    '</div>';
-}
-
-/* 载入所选项目的历史出库清单（按物料聚合，取每个物料最近一次出库数量） */
-async function ppLoad() {
-  var proj = $('#pp-proj').value;
-  var box = $('#pp-list');
-  if (!proj) { box.innerHTML = '<div class="form-hint">选择项目后显示清单</div>'; return; }
-  var records = await State.loadRecords();
-  var byMat = {};
-  for (var i = records.length - 1; i >= 0; i--) {
-    var r = records[i];
-    if (r.project !== proj || r.type !== 'out') continue;
-    if (byMat[r.materialId] !== undefined) continue;
-    byMat[r.materialId] = r.qty;
-  }
-  var rows = '';
-  var count = 0;
-  for (var mid in byMat) {
-    var m = null;
-    for (var j = 0; j < State.materials.length; j++) {
-      if (State.materials[j].id === mid) { m = State.materials[j]; break; }
-    }
-    if (!m) continue;
-    count++;
-    var low = (m.stock || 0) <= (m.minStock || 0);
-    rows += '<tr>' +
-      '<td style="width:36px"><input type="checkbox" class="pp-chk" checked data-mid="' + mid + '"></td>' +
-      '<td><span class="t-link" onclick="gotoMaterial(\'' + mid + '\')">' + escapeHtml(m.name) + '</span><div style="font-size:12px;color:var(--text-sub)">' + escapeHtml(m.model || '') + '</div></td>' +
-      '<td style="white-space:nowrap">' + (canSeeLoc(m.id) ? locBadge(m.loc, m.locNo) : '<span style="color:var(--text-sub)">🔒 做有效出入库后可见</span>') + '</td>' +   // 项目领料表格统一 locBadge
-      '<td style="white-space:nowrap">' + escapeHtml(m.unit || '') + '</td>' +
-      '<td style="color:' + (low ? 'var(--danger)' : 'var(--text-sub)') + '">' + (m.stock || 0) + '</td>' +
-      '<td style="width:90px"><input class="input pp-qty" type="number" min="1" step="1" value="' + byMat[mid] + '" oninput="ppRefreshTotals()" style="padding:6px 10px;width:80px"></td>' +
-      '<td class="pp-total" style="width:84px;font-weight:600" data-total="' + byMat[mid] + '">' + byMat[mid] + '</td>' +
-      '</tr>';
-  }
-  if (!count) rows = '<tr><td colspan="7"><div class="empty">这个项目还没有出库记录</div></td></tr>';
-  box.innerHTML =
-    '<div style="margin-top:6px" class="table-wrap"><table class="tbl">' +
-      '<thead><tr><th></th><th>物料</th><th>位置</th><th>单位</th><th>当前库存</th><th>单份数量</th><th>合计出库</th></tr></thead>' +
-      '<tbody>' + rows + '</tbody></table></div>' +
-    /* 底部：左侧"本次要 N 份该项目物料"，右侧出库/导出按钮 */
-    '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center">' +
-      '<span style="font-size:14px">本次要</span>' +
-      '<input class="input" type="number" id="pp-copies" min="1" step="1" value="1" oninput="ppRefreshTotals()" style="width:66px;padding:6px 8px" />' +
-      '<span style="font-size:14px">份该项目物料</span>' +
-      '<div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">' +
-        '<button class="btn btn-primary" onclick="ppBatchOut()">出库勾选物料</button>' +
-        '<button class="btn btn-outline" onclick="ppExport()">导出清单 CSV</button>' +
-      '</div>' +
-    '</div>';
-}
-
-/* 份数或单份数量变化：合计 = 单份数量 × 份数 */
-function ppRefreshTotals() {
-  var copiesEl = $('#pp-copies');
-  var copies = copiesEl ? (parseInt(copiesEl.value, 10) || 1) : 1;
-  if (copies < 1) copies = 1;
-  var qtys = document.querySelectorAll('.pp-qty');
-  for (var i = 0; i < qtys.length; i++) {
-    var base = parseInt(qtys[i].value, 10) || 0;
-    var total = base * copies;
-    var cell = qtys[i].closest('tr').querySelector('.pp-total');
-    cell.textContent = total;
-    cell.setAttribute('data-total', total);
-  }
-}
-
-/* 批量出库勾选物料 */
-async function ppBatchOut() {
-  var proj = $('#pp-proj').value;
-  if (!proj) { toast('请先选择项目', 'warn'); return; }
-  var chks = document.querySelectorAll('.pp-chk:checked');
-  if (!chks.length) { toast('请至少勾选一种物料', 'warn'); return; }
-  var done = 0, fail = 0;
-  beginBatchLoc();                                                              // 批量：统一收集位置提示
-  for (var i = 0; i < chks.length; i++) {
-    var row = chks[i].closest('tr');
-    var qty = parseInt(row.querySelector('.pp-total').getAttribute('data-total'), 10);
-    if (!qty || qty < 1) { fail++; continue; }
-    var ok = await applyStockRecord(chks[i].getAttribute('data-mid'), 'out', qty, { project: proj, remark: '项目领料：' + proj });
-    if (ok) done++; else fail++;
-  }
-  toast('已出库 ' + done + ' 种物料' + (fail ? '，' + fail + ' 种失败（库存不足）' : ''), fail ? 'warn' : 'ok');
-  endBatchLoc();                                                              // 批量结束：一次显示所有位置
-  ppLoad();
-}
-
-/* 导出勾选清单 CSV */
-function ppExport() {
-  var proj = $('#pp-proj').value;
-  if (!proj) { toast('请先选择项目', 'warn'); return; }
-  var chks = document.querySelectorAll('.pp-chk:checked');
-  if (!chks.length) { toast('请至少勾选一种物料', 'warn'); return; }
-  var lines = ['物料名称,型号/规格,存放位置,单位,本次数量,备注'];
-  var copiesEl = $('#pp-copies');
-  var copies = copiesEl ? (parseInt(copiesEl.value, 10) || 1) : 1;
-  for (var i = 0; i < chks.length; i++) {
-    var row = chks[i].closest('tr');
-    var firstLine = row.cells[1].innerText.split('\n')[0];
-    var loc = row.cells[2].innerText.split('\n').join('/').trim();
-    var unit = row.cells[3].innerText.trim();
-    var qty = row.querySelector('.pp-total').getAttribute('data-total');
-    lines.push('"' + firstLine.replace(/"/g, '""') + '",,"' + loc.replace(/"/g, '""') + '",' + unit + ',' + qty + ',（共 ' + copies + ' 份）');
-  }
-  var blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = proj + '-物料清单.csv';
-  a.click();
-}
-
-/* ==================== 9. 嘉立创 BOM 导入 ==================== */
-
-var BOMState = null;
-
+/* ==================== CSV 解析公共工具（项目配料页复用） ==================== */
 /* CSV 拆行（支持引号内逗号、双引号转义） */
 function csvSplitLine(line) {
   var out = [], cur = '', q = false;
@@ -1816,219 +1654,10 @@ function csvSplitLine(line) {
 }
 function csvCell(s) { return String(s || '').replace(/^"|"$/g, '').trim(); }
 
-/* 读取并解析 BOM 文件 */
-async function bomImport(inputEl) {
-  var file = inputEl && inputEl.files ? inputEl.files[0] : inputEl;   /* 兼容：传 input 元素 或 直接传 File（拖拽） */
-  if (!file) return;
-  if (inputEl && inputEl.files) inputEl.value = '';
-  var lowName = file.name.toLowerCase();
-  var grid = null;                                                    /* 统一成二维数组 */
-  if (lowName.endsWith('.xlsx') || lowName.endsWith('.xls')) {
-    if (typeof XLSX === 'undefined') { toast('表格解析组件未加载，请改用 CSV', 'err'); return; }
-    var buf = await file.arrayBuffer();
-    var wb = XLSX.read(buf, { type: 'array' });
-    var ws = wb.Sheets[wb.SheetNames[0]];
-    grid = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-  } else {
-    var text = await file.text();
-    var lines = text.split(/\r?\n/);
-    grid = [];
-    for (var li = 0; li < lines.length; li++) grid.push(csvSplitLine(lines[li]));
-  }
-  /* 单元格统一转字符串 */
-  for (var g0 = 0; g0 < grid.length; g0++) {
-    for (var g1 = 0; g1 < grid[g0].length; g1++) grid[g0][g1] = csvCell(String(grid[g0][g1]));
-  }
-  /* 找表头行：名称列认 名称/comment/Device/Name/型号/model；数量列认 个数/数量/Quantity */
-  var headIdx = -1, cols = null;
-  for (var i = 0; i < grid.length; i++) {
-    var isName = grid[i].some(function (c) { return /名称|comment|^device$|^name$|^型号$|^model$/i.test(c); });
-    var isQty = grid[i].some(function (c) { return /^(个数|数量|quantity|qty)$/i.test(c); });
-    if (isName && isQty) { headIdx = i; cols = grid[i]; break; }
-  }
-  if (headIdx < 0) { toast('没识别出 BOM 表头（需含“型号/名称”和“数量”列）；表头对不上可用“手动映射”', 'err'); return; }
-  var map = pmxAutoColMap(cols);                                    /* 大小写不敏感的列语义识别（Device/Name/Value/Footprint/数量…） */
-  /* 数据行 → needs（主名 + Value/封装/立创编号；Device 里内嵌的 _C编号 拆出来） */
-  var needs = [];
-  for (var r = headIdx + 1; r < grid.length; r++) {
-    var d = grid[r];
-    var dev = map.iDev >= 0 ? String(d[map.iDev] || '').trim() : '';
-    var nm = map.iName >= 0 ? String(d[map.iName] || '').trim() : '';
-    var val = map.iVal >= 0 ? String(d[map.iVal] || '').trim() : '';
-    var pkg = map.iPkg >= 0 ? String(d[map.iPkg] || '').trim() : '';
-    var mfr = map.iMfr >= 0 ? String(d[map.iMfr] || '').trim() : '';
-    var code = map.iCode >= 0 ? String(d[map.iCode] || '').trim() : '';
-    var des = map.iDes >= 0 ? String(d[map.iDes] || '').trim() : '';
-    var cmt = map.iCmt >= 0 ? String(d[map.iCmt] || '').trim() : '';  // Comment 列（型号/参数常见）
-    var qty = map.iQty >= 0 ? (parseInt(String(d[map.iQty]).replace(/[^\d]/g, ''), 10) || 1) : 1;   // 数量清洗：只留数字
-    if (!dev && !nm && !pkg && !code && !cmt) continue;                      // 空行跳过
-    var catText = pmxRowCatText(d, cols);                                     // 原表分类列文字（Category / Primary Category / Secondary Category…）
-    var desc = bomDescribe(dev, nm, val, pkg, mfr, code, des, cmt, catText);  // 类型感知人话描述（分类列优先覆盖封装前缀判断）
-    var kws = [], seenK = {};
-    [desc.name, dev, nm, val, desc.cleanPkg, mfr, code, cmt, catText].forEach(function (w) {  // 分类列文字也进关键词，与项目配料页保持一致
-      w = String(w || '').trim();
-      if (w && !seenK[w]) { seenK[w] = 1; kws.push(w); }
-    });
-    if (!kws.length) continue;
-    needs.push({ kw: kws.join('|'), n: qty, why: desc.detail, name: desc.name, detail: desc.detail, dev: dev, nm: nm, mfr: mfr, code: code, cmt: cmt });
-  }
-  if (!needs.length) { toast('BOM 里没有数据行', 'err'); return; }
-  var plan = buildPlanFromNeeds('', needs, '嘉立创 BOM', true);
-  var defaultName = file.name.replace(/\.(csv|txt|xlsx|xls)$/i, '');
-  BOMState = { plan: plan, name: defaultName, copies: 1, visibility: 'public', saved: false };
-  bomRender();
-}
-
-/* BOM 结果弹窗 */
-function bomRender() {
-  var st = BOMState;
-  var plan = st.plan;
-  /* 库里有的（含替代） */
-  var haveRows = '';
-  for (var j = 0; j < plan.items.length; j++) {
-    var it = plan.items[j];
-    var m = it.material;
-    var canOut = m.stock > 0;
-    var stBadge = it.status === 'ok' ? '<span class="badge badge-green">库存充足</span>' : it.status === 'low' ? '<span class="badge badge-yellow">数量不足</span>' : '<span class="badge badge-red">库存为空</span>';
-    var altTag = it.alt ? '<span class="badge badge-yellow">替代：' + escapeHtml(it.altKw) + '</span>' : '';
-    haveRows += '<div class="ai-plan-item">' +
-      '<input type="checkbox" class="bom-chk" data-mid="' + m.id + '"' + (canOut ? ' checked' : ' disabled') + ' />' +
-      '<div class="p-name"><span class="t-link" onclick="gotoMaterial(\'' + m.id + '\')">' + escapeHtml(m.name) + '</span><div style="font-size:12px;color:var(--text-sub)">' + escapeHtml(m.model || '') + ' · ' + locBadge(m.loc, m.locNo, !canSeeLoc(m.id)) + '</div></div>' +
-      altTag +
-      '<span style="font-size:12.5px">单份 <b>' + it.needQty + '</b> · 合计 <b class="bom-line-total">' + (it.needQty * st.copies) + '</b> · 现有 ' + m.stock + '</span>' +
-      stBadge + '</div>';
-  }
-  if (!plan.items.length) haveRows = '<div class="empty">BOM 物料在库里一个都没匹配到</div>';
-  /* 库里没有的 */
-  var missRows = '';
-  for (var b = 0; b < plan.missing.length; b++) {
-    var ms = plan.missing[b];
-    var nm2 = ms.name || String(ms.kw || '').split('|')[0];
-    missRows += '<div class="ai-plan-item" style="border-style:dashed"><div class="p-name"><b>' + escapeHtml(nm2) + '</b>' +
-      (ms.detail ? '<div style="font-size:12px;color:var(--text-sub);margin-top:2px">' + escapeHtml(ms.detail) + '</div>' : '') + '</div>' +
-      '<span style="font-size:12.5px">建议购 <b>' + (ms.n * st.copies) + '</b> 个</span></div>';
-  }
-  if (!plan.missing.length) missRows = '<div class="empty">BOM 物料全部能在库里找到</div>';
-
-  var body =
-    /* 项目名 + 份数 + 可见范围 */
-    '<div class="form-item"><label>项目名称（出库记录和保存都用这个名字） <span class="req">*</span></label>' +
-      '<input class="input" id="bom-name" maxlength="40" value="' + escapeHtml(st.name) + '" /></div>' +
-    '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:12px">' +
-      '<span style="font-size:13.5px">制作份数</span>' +
-      '<input class="input" type="number" id="bom-copies" min="1" step="1" value="' + st.copies + '" style="width:70px;padding:6px 8px" oninput="bomRefreshTotals()" />' +
-      '<span style="font-size:13.5px">可见范围</span>' +
-      '<label style="font-size:13px"><input type="radio" name="bom-vis" value="public"' + (st.visibility === 'public' ? ' checked' : '') + ' onchange="BOMState.visibility=\'public\'" /> 公开</label>' +
-      '<label style="font-size:13px"><input type="radio" name="bom-vis" value="private"' + (st.visibility === 'private' ? ' checked' : '') + ' onchange="BOMState.visibility=\'private\'" /> 私密</label>' +
-    '</div>' +
-    '<div class="card" style="margin-bottom:12px"><div class="card-title">库里有 / 可替代（' + plan.items.length + '）</div>' + haveRows + '</div>' +
-    '<div class="card" style="margin-bottom:0"><div class="card-title">库里没有（' + plan.missing.length + '）</div>' + missRows +
-    (plan.missing.length ? '<div style="margin-top:10px;text-align:right"><button class="btn btn-outline" onclick="aiFindReplace()">' + ICONS.ai + 'AI 查找替代元件</button></div>' : '') +
-    '</div>';
-
-  openModal('嘉立创 BOM 导入', body,
-    '<button class="btn" onclick="closeModal()">取消</button>' +
-    '<button class="btn btn-outline" onclick="bomExport()">导出取件清单</button>' +
-    '<button class="btn btn-outline" onclick="bomSaveOnly()">仅保存项目</button>' +
-    '<button class="btn btn-blue" onclick="bomClaim()">' + ICONS.out + '出库并保存项目</button>', true);
-}
-
-/* 份数变化：只更新合计，不重渲染（保留勾选） */
-function bomRefreshTotals() {
-  var st = BOMState;
-  st.copies = parseInt($('#bom-copies').value, 10) || 1;
-  var chks = document.querySelectorAll('.bom-chk');
-  for (var i = 0; i < chks.length; i++) {
-    var it = st.plan.items[i];
-    var el = chks[i].closest('.ai-plan-item').querySelector('.bom-line-total');
-    if (el) el.textContent = it.needQty * st.copies;
-  }
-  st.name = $('#bom-name').value.trim();
-}
-
-/* 组装项目对象 */
-function bomBuildProject() {
-  var st = BOMState;
-  st.name = $('#bom-name').value.trim();
-  if (!st.name) { toast('请填写项目名称', 'err'); return null; }
-  return {
-    id: uid('aip'), name: st.name, source: 'bom', need: '嘉立创 BOM：' + st.name,
-    plans: [serializePlan(st.plan)], chat: [], visibility: st.visibility,
-    operator: Auth.user.username, createdAt: Date.now(), updatedAt: Date.now()
-  };
-}
-
-/* 出库并保存：勾选的物料按 单份×份数 出库，然后存项目 */
-async function bomClaim() {
-  var st = BOMState;
-  var proj = bomBuildProject();
-  if (!proj) return;
-  var chks = document.querySelectorAll('.bom-chk:checked');
-  if (!chks.length) { toast('没有勾选可出库的物料', 'warn'); return; }
-  var done = 0, fail = 0;
-  beginBatchLoc();                                                              // 批量：统一收集位置提示
-  for (var i = 0; i < chks.length; i++) {
-    var itemEl = chks[i].closest('.ai-plan-item');
-    var mid = chks[i].getAttribute('data-mid');
-    var qty = parseInt(itemEl.querySelector('.bom-line-total').textContent, 10);
-    var ok = await applyStockRecord(mid, 'out', qty, { project: proj.name, remark: '嘉立创 BOM 导入：' + proj.name });
-    if (ok) {
-      done++;
-      /* 加项目名标签 */
-      var m = await DB.get('materials', mid);
-      if (m) {
-        m.tags = m.tags || [];
-        if (m.tags.indexOf(proj.name) < 0) { m.tags.push(proj.name); delete m._search; await DB.put('materials', m); }
-      }
-    } else fail++;
-  }
-  await DB.put('ai_projects', proj);
-  await State.refreshMaterials();
-  closeModal();
-  toast('已出库 ' + done + ' 种物料，项目「' + proj.name + '」已保存' + (fail ? '，' + fail + ' 种失败' : ''), fail ? 'warn' : 'ok');
-  endBatchLoc();                                                              // 批量结束：一次显示所有位置
-  PageCache = {};   // 数据已变
-  refreshCurrentPage();
-}
-
-/* 仅保存项目（不出库） */
-async function bomSaveOnly() {
-  var proj = bomBuildProject();
-  if (!proj) return;
-  await DB.put('ai_projects', proj);
-  closeModal();
-  toast('项目「' + proj.name + '」已保存到历史记录', 'ok');
-}
-
-/* 导出 BOM 取件清单（勾选 + 缺失） */
-function bomExport() {
-  var st = BOMState;
-  st.name = $('#bom-name').value.trim() || 'BOM项目';
-  var lines = ['物料名称,型号/规格,位置,数量,状态,签收'];
-  var chks = document.querySelectorAll('.bom-chk');
-  for (var i = 0; i < chks.length; i++) {
-    var itemEl = chks[i].closest('.ai-plan-item');
-    var it = st.plan.items[i];
-    var nm = itemEl.querySelector('.p-name b').textContent;
-    var sub = itemEl.querySelector('.p-name div').textContent;
-    var qty = itemEl.querySelector('.bom-line-total').textContent;
-    lines.push('"' + nm + '","' + sub + '","' + escapeCsv((it.material.loc || '') + (it.material.locNo || '')) + '",' + qty + ',库里有,');
-  }
-  for (var b = 0; b < st.plan.missing.length; b++) {
-    var ms = st.plan.missing[b];
-    lines.push('"' + ms.kw.replace(/"/g, '""') + '",,,' + (ms.n * st.copies) + ',需采购,');
-  }
-  var blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = st.name + '-取件清单.csv';
-  a.click();
-}
+/* CSV 字段转义（双引号翻倍） */
 function escapeCsv(s) { return String(s).replace(/"/g, '""'); }
 
-/* ==================== AI 查找替代元件（BOM 导入用） ==================== */
-var AISuggest = null;                                     /* 最近一次 AI 建议 {list:[{kw,altId,altName,reason}], mapping:[missingIdx]} */
-
+/* ==================== AI 调用公共工具（项目配料页复用） ==================== */
 /* AI 返回的关键词 与 本地缺失项关键词 做分段模糊匹配（AI 常只回简写） */
 function aiKwHit(a, b) {
   var sa = String(a || '').toLowerCase(), sb = String(b || '').toLowerCase();
@@ -2066,110 +1695,7 @@ function aiCallRetry(messages, cfg) {
   }
   return once();
 }
-
-async function aiFindReplace() {
-  var st = BOMState;
-  if (!st.plan.missing.length) { toast('没有缺失物料，不需要找替代', 'warn'); return; }
-  var cfg = await pickAIConfig('pick');
-  if (!cfg || !cfg.enabled || !cfg.url) { toast('请先在系统设置接入 AI，并给该配置勾选"项目领料"用途', 'warn'); return; }
-  var mats = State.materials.filter(function (m) { return !m.deleted && m.stock > 0; });
-  var libLines = mats.slice(0, 50).map(function (m) {
-    return m.name + (m.model ? '/' + m.model : '') + '/库存' + m.stock;
-  });
-  var libTxt = libLines.join('\n') || '（仓库是空的）';
-  var estMin = Math.ceil(Math.ceil(st.plan.missing.length / 10) * 2.5);  /* 串行每批约 2.5 分钟（实测），按批数估算 */
-  openModal('AI 查找替代', '<div style="padding:20px;text-align:center;color:var(--text-sub)">正在让 AI 对照仓库找替代……<div style="margin-top:12px;font-size:13px;color:var(--text-sub)">共 ' + st.plan.missing.length + ' 种缺失，预计约 ' + estMin + ' 分钟（每批 10 条约 2-3 分钟），关闭弹窗可随时中止</div></div>', null);
-  window._aiAbort = false;                                           /* 重置中止标志（须在 openModal 之后） */
-  try {
-    var all = [];                                /* 合并所有批次建议 */
-    var BATCH = 10;                              /* 每批 10 条缺失：批数更少，串行总时间更短 */
-    var CONC = 1;                                /* 串行：账户限并发，并发必触发 429，只能串行最稳 */
-    var total = st.plan.missing.length;
-    var batches = Math.ceil(total / BATCH);
-    var done = 0;
-    for (var b0 = 0; b0 < batches; b0 += CONC) {
-      if (window._aiAbort) break;                                   /* 弹窗被关闭，中止 */
-      var grp = [];
-      for (var g = b0; g < Math.min(b0 + CONC, batches); g++) grp.push(g);
-      var parts = await Promise.all(grp.map(function (bi) {
-        var chunk = st.plan.missing.slice(bi * BATCH, (bi + 1) * BATCH);
-        var missLines = chunk.map(function (ms, ix) {
-          return '缺' + (bi * BATCH + ix + 1) + '：' + ms.kw + '（需 ' + ms.n + ' 个）';
-        });
-        var sys = '你是电子元件选型工程师，帮学生从仓库里找可替代元件。\n' +
-          '仓库现有库存物料（名称/型号/库存）：\n' + libTxt + '\n\n' +
-          'BOM 里缺的物料：\n' + missLines.join('\n') + '\n\n' +
-          '要求：为每条缺失物料推荐 1 个仓库里最合适的替代品（优先同封装、同参数、同功能；找不到合适的 altId 就填空字符串）。' +
-          '只返回 JSON 数组，格式：[{"kw":"缺失物料原关键词","n":缺失数量,"altId":"仓库物料id或空","altName":"替代品名称或空","reason":"15字内理由"}]，不要输出 JSON 以外的任何文字。';
-        return aiCallRetry([{ role: 'user', content: sys }], cfg).then(function (reply) {
-          return extractJSONArray(String(reply)) || [];
-        });
-      }));
-      if (window._aiAbort) break;                                   /* 弹窗被关闭，中止 */
-      for (var p = 0; p < parts.length; p++) all = all.concat(parts[p]);
-      done += grp.length;
-      $('.modal-body').innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-sub)">正在让 AI 对照仓库找替代（已完成 ' + done + '/' + batches + ' 批，共 ' + total + ' 种）……<div style="margin-top:12px;font-size:13px;color:var(--text-sub)">关闭弹窗可随时中止</div></div>';
-    }
-    if (window._aiAbort) { toast('AI 查找替代已中止', 'warn'); return; }  /* 被中止，不应用结果 */
-    if (!all.length) throw new Error('AI 没有返回可用的 JSON');
-    AISuggest = { list: all, mapping: [] };
-    var byId = {};
-    for (var i = 0; i < mats.length; i++) byId[mats[i].id] = mats[i];
-    var rows = '';
-    for (var s = 0; s < all.length; s++) {
-      var sug = all[s] || {};
-      var mi = -1;
-      for (var q = 0; q < st.plan.missing.length; q++) {
-        if (aiKwHit(st.plan.missing[q].kw, sug.kw)) { mi = q; break; }
-      }
-      AISuggest.mapping.push(mi);
-      var needN = mi >= 0 ? st.plan.missing[mi].n : (parseInt(sug.n, 10) || 0);
-      var showKw = mi >= 0 ? String(st.plan.missing[mi].kw).split('|')[0] : (sug.kw || '?');
-      var m2 = sug.altId ? byId[sug.altId] : null;
-      rows += '<div class="ai-plan-item">' +
-        '<div class="p-name"><b>' + escapeHtml(showKw) + '</b><div style="font-size:12px;color:var(--text-sub)">需 ' + (needN > 0 ? needN : '?') + ' 个</div></div>' +
-        (m2
-          ? '<span class="badge badge-green">替代：' + escapeHtml(sug.altName || m2.name) + '（库存 ' + m2.stock + '）</span>'
-          : '<span class="badge badge-red">没有合适替代</span>') +
-        (m2
-          ? '<button class="btn btn-sm btn-primary" onclick="aiApplyAlt(' + s + ')">加入清单</button>'
-          : '') +
-        '</div>' +
-        (sug.reason ? '<div style="font-size:12px;color:var(--text-sub);margin:-4px 0 8px 14px">' + escapeHtml(sug.reason) + '</div>' : '');
-    }
-    openModal('AI 查找替代', '<div style="font-size:13px;color:var(--text-sub);margin-bottom:10px">点"加入清单"后，该物料会转入上方"库里有"并自动按替代品出库。</div>' + rows,
-      '<button class="btn" onclick="closeModal()">关闭</button>', true);
-  } catch (err) {
-    var em = /429/.test(String(err.message)) ? '请求太频繁被接口限流（HTTP 429）。已自动等待重试仍超限，请稍等 1-2 分钟再点一次' : err.message;
-    openModal('AI 查找替代', '<div class="empty">AI 调用失败：' + escapeHtml(em) + '</div>',
-      '<button class="btn" onclick="closeModal()">关闭</button>');
-  }
-}
-
-/* 把第 i 条 AI 建议的替代物料加入 BOM 清单（missing → items） */
-function aiApplyAlt(i) {
-  if (!AISuggest) return;
-  var sug = AISuggest.list[i];
-  var mi = AISuggest.mapping[i];
-  var st = BOMState;
-  var m = null;
-  for (var k = 0; k < State.materials.length; k++) {
-    if (State.materials[k].id === sug.altId) { m = State.materials[k]; break; }
-  }
-  if (!m) { toast('该替代物料已不存在', 'err'); return; }
-  if (mi < 0 || mi >= st.plan.missing.length) { toast('找不到对应的缺失物料', 'err'); return; }
-  var ms = st.plan.missing[mi];
-  st.plan.items.push({
-    mid: m.id, material: m, needQty: ms.n, unit: m.unit || '', loc: m.loc || '', locNo: m.locNo || '',
-    have: m.stock, status: m.stock >= ms.n ? 'ok' : (m.stock > 0 ? 'low' : 'none'),
-    alt: true, altKw: ms.kw, why: 'AI 推荐替代'
-  });
-  st.plan.missing.splice(mi, 1);
-  closeModal();
-  bomRender();
-}
-
-/* ==================== 页面拖拽 BOM 文件上传 ==================== */
+/* ==================== 全局拖拽上传（按页面 / 弹窗分流，只在各自的接收点生效） ==================== */
 (function () {
   var zone = document.createElement('div');
   zone.id = 'drop-zone';
@@ -2187,10 +1713,20 @@ function aiApplyAlt(i) {
     for (var i = 0; i < t.length; i++) { if (String(t[i]).toLowerCase() === 'files') return true; }
     return false;
   };
+  /* 取当前页面名（与路由解析一致）：'#/pmix' → 'pmix' */
+  var curPageKey = function () {
+    return String(location.hash || '').replace(/^#\//, '').split('/')[0];
+  };
+  /* 当前页面 / 弹窗是否存在拖拽接收点：有接收点才显示遮罩，避免在没有接收点的页面误导用户 */
+  var hasDropTarget = function () {
+    return !!(curPageKey() === 'pmix' || $('#pr-pick-box') || $('#mf-photos') || $('#import-file') || $('#restore-file'));
+  };
   document.addEventListener('dragover', function (e) {
-    if (isFileDrag(e)) { e.preventDefault();
-      zone.style.left = document.body.classList.contains('sb-collapsed') ? '0' : 'var(--sidebar-w)'; /* 收起：全屏宽；展开：侧栏右侧主区宽 */
-      zone.style.display = 'flex'; }
+    if (!isFileDrag(e)) return;                                                                    /* 不是拖文件：不管 */
+    e.preventDefault();                                                                            /* 阻止浏览器直接打开被拖入的文件 */
+    if (!hasDropTarget()) { hide(); return; }                                                       /* 当前页面没有接收点：不显示遮罩 */
+    zone.style.left = document.body.classList.contains('sb-collapsed') ? '0' : 'var(--sidebar-w)'; /* 收起：全屏宽；展开：侧栏右侧主区宽 */
+    zone.style.display = 'flex';
   });
   document.addEventListener('dragleave', function (e) {
     if (!e.relatedTarget) hide();
@@ -2201,15 +1737,16 @@ function aiApplyAlt(i) {
     hide();
     var f = e.dataTransfer.files[0];
     if (!f) return;
-    if ($('#pr-pick-box') && f.type && f.type.indexOf('image') === 0) {   /* 图片识别弹窗开着：图片进选图框 */
+    var n = f.name.toLowerCase();
+    var isImg = !!(f.type && f.type.indexOf('image') === 0);
+    if ($('#pr-pick-box') && isImg) {                    /* 图片识别弹窗开着：图片进选图框 */
       prPickFromFile(f, 'pick');
       return;
     }
-    if ($('#mf-photos') && f.type && f.type.indexOf('image') === 0) {      /* 物料表单开着：图片进实物照片 */
+    if ($('#mf-photos') && isImg) {                      /* 物料表单开着：图片进实物照片 */
       mfPhotoAddFile(f);
       return;
     }
-    var n = f.name.toLowerCase();
     if ($('#import-file') && /\.(csv|txt)$/.test(n)) {   /* 数据管理页：物料 CSV 导入 */
       importMaterialsCSV(f);
       return;
@@ -2218,11 +1755,13 @@ function aiApplyAlt(i) {
       importFullBackup(f);
       return;
     }
-    if (/\.(xlsx|xls|csv|txt)$/.test(n)) {
-      bomImport(f);
-    } else {
-      toast('支持拖入图片、物料 CSV、备份 JSON 或 xlsx / csv / txt 的 BOM 文件', 'warn');
+    if (curPageKey() === 'pmix' && /\.(xlsx|xls|csv|txt)$/.test(n)) {   /* 项目配料页：走“导入嘉立创 BOM”按钮同一套逻辑 */
+      pmxImportBom(f);
+      return;
     }
+    /* 落在没有对应接收点的页面：明确提示该去哪个页面拖 */
+    if (isImg) toast('请在图片识别弹窗或物料表单里拖入图片', 'warn');
+    else toast('当前页面不支持拖入该文件：BOM 请在“项目配料”页拖入，物料 CSV / 备份 JSON 请在“数据管理”页拖入', 'warn');
   });
 })();
 

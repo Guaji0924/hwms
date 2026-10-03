@@ -89,7 +89,7 @@ function gotoMaterial(id) {
   }
 }
 
-/* 详情页"返回"：回到进入详情前的页面（识别结果、统计报表、项目领料等原样恢复） */
+/* 详情页"返回"：回到进入详情前的页面（识别结果、统计报表、项目配料等原样恢复） */
 function detailBack() {
   var from = LastFrom;                                                   // 来源页
   if (!from || from.indexOf('/') >= 0 || from === 'material') from = 'materials';  // 兜底：回物料库
