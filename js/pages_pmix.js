@@ -2282,7 +2282,7 @@ function pmxExportPick() {
 }
 function pmxExportPickDo(addLow, onlyMarked) {
   var name = PMX.name || '项目';
-  var lines = ['物料名称,型号/规格,位置,份数,单份,合计,状态,签收'];
+  var lines = ['物料名称,型号/规格,位置,实际能拿,备注,,份数,单份,合计'];
   var plan = PMX.plan;
   var marks = onlyMarked ? (PMX.pickMarks || {}) : null;
   var grpHave = [], grpAlt = [], grpLow = [];                    // 库里有 / 已采用代替 / 库里不够，分组标注+组间空行
@@ -2293,9 +2293,9 @@ function pmxExportPickDo(addLow, onlyMarked) {
     if (isLow && !addLow) continue;                                                   // 不加：库里不够的跳过
     var loc = canSeeLoc(m.id) ? (m.loc || '') + (m.locNo || '') : '未解锁';
     var st = isLow ? '库里不够' : (it.alt ? '已采用代替' : '库里有');
-    /* 合计=实际要拿的总数：库里不够时只拿得到现有库存，不能写需求总数 */
-    var pickQty = isLow ? Math.min(it.needQty * PMX.copies, m.stock) : (it.needQty * PMX.copies);
-    var row = '"' + escapeCsv(m.name) + '","' + escapeCsv(m.model || '') + '","' + escapeCsv(loc) + '",' + PMX.copies + ',' + it.needQty + ',' + pickQty + ',' + st + ',';
+    /* 实际能拿=真正能拿到手的数量：库里不够时只拿得到现有库存，其余按需求合计 */
+    var realQty = isLow ? Math.min(it.needQty * PMX.copies, m.stock) : (it.needQty * PMX.copies);
+    var row = '"' + escapeCsv(m.name) + '","' + escapeCsv(m.model || '') + '","' + escapeCsv(loc) + '",' + realQty + ',"' + escapeCsv(st) + '",,' + PMX.copies + ',' + it.needQty + ',' + (it.needQty * PMX.copies);
     if (isLow) grpLow.push(row); else if (it.alt) grpAlt.push(row); else grpHave.push(row);
   }
   var out = [lines[0]];
@@ -2318,16 +2318,17 @@ function pmxExportBuy() {
     '默认导出库里没有的物料，可勾选追加其他情况。<div style="margin-top:10px;line-height:2.2">' +
     '<label style="display:block"><input type="checkbox" id="buy-add-low" /> 将库里不够的物料也加入购买清单</label>' +
     '<label style="display:block"><input type="checkbox" id="buy-add-rep" /> 将被代替的物料也加入购买清单</label></div>' +
-    '<div style="margin-top:8px;color:var(--text-sub);font-size:12.5px">注：已采用替代、但按当前份数仍不够的物料，会并入"库里不够"一并统计，"数量"列按差额算。</div>',
+    '<div style="margin-top:8px;color:var(--text-sub);font-size:12.5px">注：已采用替代、但按当前份数仍不够的物料，会并入"库里不够"一并统计，"实际应买"列按差额算。</div>',
     '<button class="btn" onclick="closeModal()">取消</button>' +
     '<button class="btn btn-primary" onclick="pmxExportBuyDo(!!(document.getElementById(\'buy-add-low\')&&document.getElementById(\'buy-add-low\').checked), !!(document.getElementById(\'buy-add-rep\')&&document.getElementById(\'buy-add-rep\').checked));closeModal()">导出</button>');
 }
 function pmxExportBuyDo(addLow, addReplaced) {
   var name = PMX.name || '项目';
-  var lines = ['物料名称,型号,封装,标称值,位号,立创编号,厂家型号,份数,单份,合计,数量,备注'];
+  var lines = ['物料名称,型号,封装,标称值,位号,立创编号,厂家型号,实际应买,备注,,份数,单份,合计'];
   var plan = PMX.plan;
   /* 拼一行：优先用 BOM 识别出来的字段（_f，和原表一致），缺的用库内档案（m）兜底，保证照着就能买
-     unitQty=单份需求，totalQty=合计需求（单份×份数），buyQty=需购买量（差额），传 null 表示不适用（留空） */
+     unitQty=单份需求，totalQty=合计需求（单份×份数），buyQty=实际应买（差额），传 null 表示不适用（留空）
+     列顺序：…,实际应买,备注,(空列),份数,单份,合计 */
   function buyRow(f, m, nmFallback, unitQty, totalQty, buyQty, note) {
     var f2 = f || {}, m2 = m || {};
     var txt = [
@@ -2339,7 +2340,7 @@ function pmxExportBuyDo(addLow, addReplaced) {
       f2.code || m2.code || '',                  // 立创编号（可直接拿去商城搜）
       f2.mfr || ''                               // 厂家型号（完整 MPN）
     ].map(function (x) { return '"' + escapeCsv(x) + '"'; }).join(',');
-    return txt + ',' + PMX.copies + ',' + unitQty + ',' + totalQty + ',' + (buyQty === null ? '' : buyQty) + ',"' + escapeCsv(note || '') + '"';   // 份数/单份/合计/数量都是数字，不套引号，方便 Excel 求和
+    return txt + ',' + (buyQty === null ? '' : buyQty) + ',"' + escapeCsv(note || '') + '",,' + PMX.copies + ',' + unitQty + ',' + totalQty;   // 应买/份数/单份/合计都是数字，不套引号，方便 Excel 求和
   }
   var groups = [];
   /* 1) 库里没有（未采用替代的缺料） */
