@@ -2327,7 +2327,7 @@ function pmxExportBuyDo(addLow, addReplaced) {
   var lines = ['物料名称,型号,封装,标称值,位号,立创编号,厂家型号,实际应买,备注,,份数,单份,合计'];
   var plan = PMX.plan;
   /* 拼一行：优先用 BOM 识别出来的字段（_f，和原表一致），缺的用库内档案（m）兜底，保证照着就能买
-     unitQty=单份需求，totalQty=合计需求（单份×份数），buyQty=实际应买（差额），传 null 表示不适用（留空）
+     unitQty=单份需求，totalQty=合计需求（单份×份数），buyQty=实际应买（差额，每行都有值）
      列顺序：…,实际应买,备注,(空列),份数,单份,合计 */
   function buyRow(f, m, nmFallback, unitQty, totalQty, buyQty, note) {
     var f2 = f || {}, m2 = m || {};
@@ -2340,7 +2340,7 @@ function pmxExportBuyDo(addLow, addReplaced) {
       f2.code || m2.code || '',                  // 立创编号（可直接拿去商城搜）
       f2.mfr || ''                               // 厂家型号（完整 MPN）
     ].map(function (x) { return '"' + escapeCsv(x) + '"'; }).join(',');
-    return txt + ',' + (buyQty === null ? '' : buyQty) + ',"' + escapeCsv(note || '') + '",,' + PMX.copies + ',' + unitQty + ',' + totalQty;   // 应买/份数/单份/合计都是数字，不套引号，方便 Excel 求和
+    return txt + ',' + buyQty + ',"' + escapeCsv(note || '') + '",,' + PMX.copies + ',' + unitQty + ',' + totalQty;   // 实际应买/份数/单份/合计都是数字，不套引号，方便 Excel 求和
   }
   var groups = [];
   /* 1) 库里没有（未采用替代的缺料） */
@@ -2349,7 +2349,10 @@ function pmxExportBuyDo(addLow, addReplaced) {
     var ms = plan.missing[i];
     if (ms.adopted) continue;
     var nmB = (ms.detail && ms.detail !== ms.name) ? ms.detail : (ms.name || String(ms.kw || '').split('|')[0]);   // detail 已含名称，避免重复
-    grpMiss.push(buyRow(ms._f, ms._lib, nmB, ms.n, ms.n * PMX.copies, null, '库里没有'));
+    var missNeed = ms.n * PMX.copies;                                    // 需求合计
+    var missBuy = missNeed - (ms._lib ? (ms._lib.stock || 0) : 0);       // 实际应买=差额（不在库里的库存按 0 算）
+    if (missBuy < 0) missBuy = 0;
+    grpMiss.push(buyRow(ms._f, ms._lib, nmB, ms.n, missNeed, missBuy, '库里没有'));
   }
   if (grpMiss.length) groups.push(grpMiss);
   /* 2) 被代替（勾选才加） */
@@ -2361,7 +2364,10 @@ function pmxExportBuyDo(addLow, addReplaced) {
       var nmR = (ms2.detail && ms2.detail !== ms2.name) ? ms2.detail : (ms2.name || String(ms2.kw || '').split('|')[0]);
       var repName = '？';
       if (ms2.altItemIdx !== undefined && plan.items[ms2.altItemIdx]) repName = plan.items[ms2.altItemIdx].material.name;
-      grpRep.push(buyRow(ms2._f, ms2._lib, nmR, ms2.n, ms2.n * PMX.copies, null, '被代替（用 ' + repName + ' 代替）'));
+      var repNeed = ms2.n * PMX.copies;                                  // 需求合计
+      var repBuy = repNeed - (ms2._lib ? (ms2._lib.stock || 0) : 0);      // 实际应买=差额（原物料不在库里按 0 算）
+      if (repBuy < 0) repBuy = 0;
+      grpRep.push(buyRow(ms2._f, ms2._lib, nmR, ms2.n, repNeed, repBuy, '被代替（用 ' + repName + ' 代替）'));
     }
     if (grpRep.length) groups.push(grpRep);
   }
