@@ -537,6 +537,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; } /* 表�
 .tl-item.tl-borrow::before { background: #7c3aed; }                           /* 借出紫点 */
 .tl-item.tl-return::before { background: #0d9488; }                          /* 归还青点 */
 .tl-item.tl-adjust::before { background: var(--primary); }                    /* 调整主题色点（与"库存调整"徽章一致） */
+.tl-item.tl-new::before { background: var(--success); }                       /* 新增物料绿点（与"新增物料"绿色徽章、入库点一致；写在 adjust 后面覆盖它） */
 .tl-item.tl-revoke::before { background: #dc2626; }                           /* 撤回冲销红点 */
 .badge-jump { outline: 1px dashed currentColor; cursor: pointer; }           /* 可点击跳转徽章（虚线框+箭头，颜色由内联样式指定） */
 .badge-jump:hover { filter: brightness(.85); }                               /* 悬停加深 */
@@ -673,6 +674,26 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; } /* 表�
 .pkg-suggest .ps-item { padding: 8px 12px; font-size: 14px; cursor: pointer; border-bottom: 1px solid var(--bg-hover); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }  /* 候选行 */
 .pkg-suggest .ps-item:last-child { border-bottom: none; }           /* 最后一行无分隔 */
 .pkg-suggest .ps-item:hover { background: var(--bg-hover); }        /* 悬停高亮 */
+
+/* --- 新增物料表单：分类下拉菜单（母类可折叠展开；原生 optgroup 不能折叠才自己画） --- */
+.mf-cat-menu { display: none; position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px; background: #fff; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.12); z-index: 99; max-height: 280px; overflow: auto; }  /* 菜单本体 */
+.mf-cat-ghead { padding: 8px 12px; font-size: 13px; font-weight: 600; cursor: pointer; background: var(--bg-soft); border-bottom: 1px solid var(--border); user-select: none; }  /* 母类组头：点击折叠/展开 */
+.mf-cat-ghead:hover { background: var(--bg-hover); }                 /* 组头悬停 */
+.mf-cat-opt { padding: 8px 12px 8px 26px; font-size: 13.5px; cursor: pointer; }  /* 可选项（子类缩进） */
+.mf-cat-opt:hover { background: var(--primary-light); color: var(--primary); }   /* 选项悬停（与位置下拉一致） */
+html[data-theme="dark"] .mf-cat-menu { background: var(--bg-card); box-shadow: 0 6px 20px rgba(0,0,0,.5); }  /* 深色模式 */
+
+/* --- 新增物料表单：名称输入框聚焦时弹出的"怎么起名"提示卡 --- */
+.mf-name-tip {                                                     /* 提示卡（默认隐藏，聚焦名称时显示） */
+  position: absolute; right: calc(100% + 10px); top: 26px; width: 300px;   /* 电脑端：放输入框左边，弹到卡片外，不挡卡里其他内容 */
+  background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; font-size: 12.5px; line-height: 1.9; color: var(--text-sub);
+  z-index: 60; box-shadow: 0 6px 18px rgba(0,0,0,.14); display: none; pointer-events: none;  /* pointer-events:none：不挡点击，也不会把输入框的焦点顶掉 */
+}
+.mf-name-tip b { color: var(--text); }                              /* 标题行用正文色 */
+@media (max-width: 1599px) {                                        /* 中窄屏：卡片左侧空间不够（会被遮罩裁掉），改到输入框下方弹出 */
+  .mf-name-tip { right: auto; left: 0; top: calc(100% + 6px); }
+}
 
 .kv-list { font-size: 13.5px; }                                   /* 键值对列表 */
 .kv-list .kv { display: flex; padding: 7px 0; border-bottom: 1px dashed var(--border); gap: 12px; } /* 单行键值 */

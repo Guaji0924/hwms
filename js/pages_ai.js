@@ -663,28 +663,20 @@ function prToFormNew() {
   openMaterialForm('');                                                // 打开新增表单（替换当前弹窗）
   mfPhotos = PRState.dataUrl ? [PRState.dataUrl] : [];                 // 识别照片作为第一张实物照
   renderMfPhotos();
-  $('#mat-form').querySelector('[name="name"]').value = String(r.name || '');
-  $('#mat-form').querySelector('[name="model"]').value = String(r.model || '');
+  var rName = String(r.name || '');                                   // 识别出的名称
+  var rModel = String(r.model || '').trim();                          // 识别出的型号（表单已无型号框，并进名称）
+  $('#mat-form').querySelector('[name="name"]').value = (rModel && rName.toLowerCase().indexOf(rModel.toLowerCase()) < 0) ? (rName + ' ' + rModel).trim() : rName;
   $('#mat-form').querySelector('[name="desc"]').value = String(r.desc || '');
   if (r.tags) {
     $('#mat-form').querySelector('[name="tags"]').value = String(r.tags).replace(/[，;；、]/g, ',');
   }
   var cat = String(r.cat || '');
-  if (cat) {
-    var inTree = false;
-    for (var c = 0; c < CAT_TREE.length; c++) { if (CAT_TREE[c].name === cat) { inTree = true; break; } }
-    if (inTree) $('#mf-cat').value = cat;
-    else { $('#mf-cat').value = '自定义'; $('#mf-cat2').value = cat; }
-  }
-  mfCatChanged();
   var sub = String(r.sub || '');
-  if (sub) {
-    var sel = $('#mf-sub');
-    var has = false;
-    for (var s = 0; s < sel.options.length; s++) { if (sel.options[s].value === sub) { has = true; break; } }
-    if (has) sel.value = sub;
-    else { sel.value = '自定义'; $('#mf-sub2').value = sub; }
-    mfSubCustom();
+  if (cat) {
+    var want = sub ? (cat + '/' + sub) : cat;                         // 想选中的值（"母分类"或"母分类/子分类"）
+    if (!mfCatInTree(want) && sub && mfCatInTree(cat)) want = cat;    // "母/子"组合不在树里 → 退一步只选母分类
+    if (mfCatInTree(want)) mfCatSetVal(want);                         // 树里有：直接选中
+    else { mfCatSetVal('自定义'); $('#mf-cat2').value = want; }       // 树里没有：走自定义输入框
   }
   prFormBackBtn();                                                     // 把表单"取消"改成"返回识别"
   toast('已填好表单，补全存放位置后保存', 'ok');

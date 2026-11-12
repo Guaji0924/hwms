@@ -399,30 +399,31 @@ function openMaterialForm(id) {
     }
     if (!m) { toast('物料不存在', 'err'); return; }                // 没找到
   }
-  /* 母分类下拉选项（支持自定义：最后加一个"自定义…"选项） */
-  var catOpts = '<option value="">-- 请选择 --</option>';
-  var selCat = m ? m.cat : '';                                     // 当前选中母分类
-  var catIsCustom = selCat && !CAT_TREE.some(function (c) { return c.name === selCat; });  // 当前分类不在树里 = 历史自定义分类
-  for (var c = 0; c < CAT_TREE.length; c++) {
-    catOpts += '<option value="' + escapeHtml(CAT_TREE[c].name) + '"' + (selCat === CAT_TREE[c].name ? ' selected' : '') + '>' + escapeHtml(CAT_TREE[c].name) + '</option>';
-  }
-  catOpts += '<option value="自定义"' + (catIsCustom ? ' selected' : '') + '>自定义…</option>';  // 自定义入口
+  /* 分类：自定义下拉（母类可折叠展开），当前值（编辑回显）格式为"母分类"或"母分类/子分类" */
+  var selCat = m ? (m.sub ? m.cat + '/' + m.sub : (m.cat || '')) : '';   // 当前选中值
+  catResetFold();                                                    // 折叠状态复位（全部收起）
   mfPhotoCamCancel();                                              // 清掉上次可能残留的摄像头流
   if (m) mfPhotos = (m.photos || []).slice();                      // 编辑时把已有照片装进暂存区
   else mfPhotos = [];                                              // 新增时清空
   /* 存放位置（组合框直接回显） */
   var locVal = m ? (m.loc || '') : '';                               // 当前存放位置
 
-  openModal(m ? '编辑物料：' + escapeHtml(m.name) : '新增物料', '' +
+  openModal((m ? '编辑物料：' + escapeHtml(m.name) : '新增物料') +
+    ' <span style="color:var(--danger);font-size:12px;font-weight:400;margin-left:8px">带 * 为必填；填得越全，模糊搜索越容易找到（支持拼音搜索）</span>', '' +
     '<form id="mat-form" onsubmit="saveMaterialForm(event, \'' + (id || '') + '\')">' +
-      /* 1. 名称 / 型号（型号必填） */
+    /* 1. 名称（聚焦时侧边弹出"怎么起名"提示） / 封装（联想输入，必填） */
       '<div class="form-row">' +
-        '<div class="form-item"><label>名称 <span class="req">*</span></label><input class="input" name="name" required maxlength="60" value="' + escapeHtml(m ? m.name : '') + '" placeholder="如：超声波测距模块" /></div>' +
-        '<div class="form-item"><label>型号 / 规格 <span class="req">*</span></label><input class="input" name="model" required maxlength="60" value="' + escapeHtml(m ? (m.model || '') : '') + '" placeholder="如：HC-SR04" /></div>' +
-      '</div>' +
-      /* 2. 封装（联想输入，必填） / 丝印 */
-      '<div class="form-row">' +
+        '<div class="form-item" style="position:relative"><label>名称 <span class="req">*</span></label><input class="input" name="name" required maxlength="60" value="' + escapeHtml(m ? m.name : '') + '" placeholder="如：NE5532 音频运算放大器芯片" onfocus="mfNameTip(true)" onblur="mfNameTip(false)" />' +
+          '<div class="mf-name-tip" id="mf-name-tip"><b>怎么起名：把最重要的信息写进名称</b><br>· 电阻/电容/电感/晶振/LED/蜂鸣器：<b>标称值/频率 + 封装 + 类型</b>，如"10KΩ 0805 贴片电阻"、"470uF 贴片电解电容"、"8MHz 插件晶振"、"5mm 插件 红色LED"、"2KHz 插件5V无源蜂鸣器"（贴片写具体封装；插件直接写"插件"二字）<br>· 芯片/单片机/模块/传感器/三极管/MOS：<b>完整型号 + 什么功能的元件</b>，如"DRV8870 电机驱动芯片"、"NE5532 音频运算放大器芯片"<br>· 排针/排母/端子等连接器：<b>间距 + P数 + 类型</b>，如"2.54mm 40P 排针"</div></div>' +
         '<div class="form-item" style="position:relative"><label>封装 <span class="req">*</span></label><input class="input" name="pkg" id="mf-pkg" required maxlength="60" value="' + escapeHtml(m ? (m.pkg || '') : '') + '" placeholder="如：DIP-8 / SOP-8 / 0805" oninput="mfPkgInput(this.value)" onfocus="mfPkgInput(this.value)" onblur="setTimeout(function(){var el=$(\'#mf-pkg-sug\');if(el)el.style.display=\'none\';},120)" /><div class="pkg-suggest" id="mf-pkg-sug"></div></div>' +
+      '</div>' +
+      /* 2. 分类（自定义下拉：母类折叠展开） / 丝印 */
+      '<div class="form-row">' +
+        '<div class="form-item" style="position:relative"><label>分类 <span class="req">*</span></label>' +
+          '<input class="input" id="mf-cat-show" readonly autocomplete="off" placeholder="-- 点开选择，按母类折叠 --" style="cursor:pointer" onfocus="mfCatMenu(true)" onblur="setTimeout(function(){mfCatMenu(false)},150)" />' +
+          '<input type="hidden" name="cat" id="mf-cat" />' +
+          '<div id="mf-cat-menu" class="mf-cat-menu"></div>' +
+          '<input class="input" name="cat2" id="mf-cat2" maxlength="40" placeholder="输入自定义分类，子分类用 / 隔开，如：传感器模块/超声波" style="display:none;margin-top:8px" /></div>' +
         '<div class="form-item"><label>丝印（元件上印的字）</label><input class="input" name="silk" maxlength="60" value="' + escapeHtml(m ? (m.silk || '') : '') + '" placeholder="如：HC-SR04 / 102" /></div>' +
       '</div>' +
       /* 3. 库存数量 / 库存预警线 / 单位（单位放最后，收窄） */
@@ -445,16 +446,9 @@ function openMaterialForm(id) {
             '<div id="mf-loc-menu" class="mf-loc-menu"></div>' +
           '</div>' +
         '</div>' +
-        '<div class="form-item"><label id="mf-locno-label">位置编号 <span class="req">*</span></label><input class="input" name="locNo" id="mf-locno" maxlength="40" value="' + escapeHtml(m ? (m.locNo || '') : '') + '" placeholder="如：A-1-03（架-层-盒）" /></div>' +
+        '<div class="form-item"><label id="mf-locno-label">位置编号 <span class="req">*</span></label><input class="input" name="locNo" id="mf-locno" maxlength="40" value="' + escapeHtml(m ? (m.locNo || '') : '') + '" placeholder="货柜：A30；货架：1-0-13（货架才用 - 分隔）" /></div>' +
       '</div>' +
-      /* 5. 母分类 / 子分类 */
-      '<div class="form-row">' +
-        '<div class="form-item"><label>母分类 <span class="req">*</span></label><select class="select" name="cat" id="mf-cat" required onchange="mfCatChanged()">' + catOpts + '</select>' +
-          '<input class="input" name="cat2" id="mf-cat2" maxlength="20" placeholder="输入自定义分类名，如：传感器模块" style="display:none;margin-top:8px" /></div>' +
-        '<div class="form-item"><label>子分类</label><select class="select" name="sub" id="mf-sub" onchange="mfSubCustom()"><option value="">-- 可不选 --</option></select>' +
-          '<input class="input" name="sub2" id="mf-sub2" maxlength="20" placeholder="输入自定义子类名" style="display:none;margin-top:8px" /></div>' +
-      '</div>' +
-      /* 6. 别称 / 标签 */
+      /* 5. 别称 / 标签 */
       '<div class="form-row">' +
         '<div class="form-item"><label>别称（搜索用，分号分隔）</label><input class="input" name="alias" maxlength="200" value="' + escapeHtml(m ? (m.alias || '') : '') + '" placeholder="如：超声波;超声;ultrasonic" /></div>' +
         '<div class="form-item"><label>标签（逗号分隔）</label><input class="input" name="tags" maxlength="120" value="' + escapeHtml(m ? ((m.tags || []).join(',')) : '') + '" placeholder="如：常用,小车必备,比赛" /></div>' +
@@ -467,35 +461,38 @@ function openMaterialForm(id) {
         '<div class="form-item"><label>供应商</label><input class="input" name="supplier" maxlength="60" value="' + escapeHtml(m ? (m.supplier || '') : '') + '" placeholder="如：立创商城 / 淘宝xx店" /></div>' +
         '<div class="form-item"><label>单价（元）</label><input class="input" name="price" type="number" step="0.01" min="0" value="' + (m ? (m.price || 0) : 0) + '" placeholder="0.00" /></div>' +
       '</div>' +
-      /* 8. 实物照片 */
-      '<div class="form-item"><label>实物照片（最多 3 张，拍了方便大家认物，也能给 AI 识别当参考）</label>' +
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+      /* 8. 实物照片（必填；选图 / 拍照各占一行，说明跟在按钮旁边） */
+      '<div class="form-item"><label>实物照片 <span class="req">*</span><span style="font-weight:400;font-size:12px;color:var(--text-sub)">（最多 3 张，自动压缩存储，方便大家认物和 AI 识别参考）</span></label>' +
+        '<div style="display:flex;flex-direction:column;gap:6px">' +
+          '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+            '<label class="btn btn-outline btn-sm" style="cursor:pointer;margin:0">' + ICONS.image + ' 图片' +
+              '<input type="file" accept="image/*" multiple style="display:none" onchange="mfPhotoAdd(this,\'pick\')" /></label>' +
+            '<span style="font-size:12.5px;color:var(--text-sub)">点击上传图片，Ctrl+V 粘贴，或把图片拖到页面任意位置</span>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
+            '<button type="button" class="btn btn-outline btn-sm" onclick="mfPhotoCamClick()">' + ICONS.camera + ' 拍照</button>' +
+            '<input type="file" id="mf-file-cam" accept="image/*" multiple capture="environment" style="display:none" onchange="mfPhotoAdd(this,\'cam\')" />' +
+            '<span style="font-size:12.5px;color:var(--text-sub)">手机直接调起系统相机，电脑上会在框内摄像头取景</span>' +
+          '</div>' +
           '<div id="mf-photos" style="display:flex;gap:8px;flex-wrap:wrap"></div>' +
-          '<label class="btn btn-outline btn-sm" style="cursor:pointer;margin:0">' + ICONS.image + ' 选图' +
-            '<input type="file" accept="image/*" multiple style="display:none" onchange="mfPhotoAdd(this,\'pick\')" /></label>' +
-          '<button type="button" class="btn btn-outline btn-sm" onclick="mfPhotoCamClick()">' + ICONS.camera + ' 拍照</button>' +
-          '<input type="file" id="mf-file-cam" accept="image/*" multiple capture="environment" style="display:none" onchange="mfPhotoAdd(this,\'cam\')" />' +
-        '</div>' +
-        '<div id="mf-cam-area" style="display:none;margin-top:8px;position:relative">' +
-          '<video id="mf-cam-video" autoplay playsinline muted style="width:100%;border-radius:8px;max-height:220px"></video>' +
-          '<div style="display:flex;gap:6px;margin-top:6px">' +
-            '<button type="button" class="btn btn-sm btn-primary" style="flex:1" onclick="mfPhotoCamSnap()">拍照</button>' +
-            '<button type="button" class="btn btn-sm" style="flex:1" onclick="mfPhotoCamCancel()">取消</button>' +
+          '<div id="mf-cam-area" style="display:none;position:relative">' +
+            '<video id="mf-cam-video" autoplay playsinline muted style="width:100%;border-radius:8px;max-height:220px"></video>' +
+            '<div style="display:flex;gap:6px;margin-top:6px">' +
+              '<button type="button" class="btn btn-sm btn-primary" style="flex:1" onclick="mfPhotoCamSnap()">拍照</button>' +
+              '<button type="button" class="btn btn-sm" style="flex:1" onclick="mfPhotoCamCancel()">取消</button>' +
+            '</div>' +
           '</div>' +
         '</div>' +
-        '<div class="form-hint">手机上点"拍照"直接调起系统相机，电脑上会在框内摄像头取景；也可以 Ctrl+V 粘贴，或把图片拖到页面任意位置（最多 3 张，自动压缩存储）</div>' +
       '</div>' +
       /* 9. 用途描述 */
       '<div class="form-item"><label>用途描述（会被搜索到，也方便 AI 理解）</label><textarea class="textarea" name="desc" maxlength="500" placeholder="这个元件是干什么用的、用在什么项目上…">' + escapeHtml(String(m ? (m.desc || '') : '').replace(/<br\s*\/?>/gi, '\n')) + '</textarea></div>' +
-      '<div class="form-hint">带 <span class="req">*</span> 为必填；别称和描述填得越全，模糊搜索越容易找到（支持拼音搜索）</div>' +
     '</form>',
     '<button class="btn" onclick="closeModal()">取消</button>' +
     '<button class="btn btn-primary" onclick="$(\'#mat-form\').requestSubmit()">' + (m ? '保存修改' : '创建物料') + '</button>',
     'mid');
 
-  /* 表单打开后：填充子分类下拉（编辑时要回显） */
-  mfCatChanged();                                                   // 触发一次子分类联动
-  if (m && m.sub) $('#mf-sub').value = m.sub;                       // 编辑时回显子分类
+  /* 表单打开后：回显当前分类（并按需显示自定义输入框） */
+  mfCatSetVal(selCat);
   if (m && m.loc) {                                                  // 回显存放位置（组合框直接显示）
     $('#mf-loc').value = m.loc;
   }
@@ -504,29 +501,98 @@ function openMaterialForm(id) {
   document.addEventListener('paste', mfPasteHandler);               // 支持 Ctrl+V 粘贴图片
 }
 
-/* 母分类改变时联动刷新子分类下拉（选"自定义…"时显示自定义输入框） */
-function mfCatChanged() {
-  var cat = $('#mf-cat').value;                                     // 当前母分类
-  $('#mf-cat2').style.display = (cat === '自定义') ? 'block' : 'none';  // 自定义输入框显隐
-  var subSel = $('#mf-sub');                                        // 子分类下拉框
-  var html = '<option value="">-- 可不选 --</option>';              // 默认选项
-  html += '<option value="自定义">自定义…</option>';                 // 子类也支持自定义
-  for (var i = 0; i < CAT_TREE.length; i++) {                       // 遍历分类树
-    if (CAT_TREE[i].name === cat) {                                 // 找到当前母分类
-      var subs = CAT_TREE[i].subs;                                   // 子分类数组
-      for (var j = 0; j < subs.length; j++) {                       // 逐个生成选项
-        html += '<option value="' + escapeHtml(subs[j]) + '">' + escapeHtml(subs[j]) + '</option>';
-      }
-      break;                                                        // 找到即停
-    }
-  }
-  subSel.innerHTML = html;                                          // 更新下拉框
+/* 名称输入框聚焦 / 失焦：显示 / 隐藏侧边的"怎么起名"提示卡 */
+function mfNameTip(show) {
+  var t = $('#mf-name-tip');                                       // 提示卡
+  if (t) t.style.display = show ? 'block' : 'none';                // 显隐
 }
 
-/* 子分类选"自定义…"时显示自定义输入框 */
-function mfSubCustom() {
-  var v = $('#mf-sub').value;                                       // 当前子分类选择
-  $('#mf-sub2').style.display = (v === '自定义') ? 'block' : 'none';  // 显隐输入框
+/* ===== 分类下拉（自定义菜单：母类可折叠展开） =====
+   原生 select + optgroup 在多数浏览器里只会显示分组标题、不能折叠，
+   所以用输入框 + 弹出菜单自己做：组头点击折叠/展开，选项点击选中。
+   隐藏 input（name="cat"）负责参与表单提交，值是"母分类"或"母分类/子分类"。 */
+var MF_CAT_OPEN = {};                                               // 各母类的展开状态（按名字记，true=展开）
+
+/* 折叠状态复位：每次打开表单全部收起 */
+function catResetFold() {
+  MF_CAT_OPEN = {};                                                 // 清空 = 全部收起
+}
+
+/* 生成分类菜单 HTML（母类组头 + 展开后的选项；最后是"自定义…"入口） */
+function mfCatMenuHtml() {
+  var html = '';
+  for (var i = 0; i < CAT_TREE.length; i++) {
+    var g = CAT_TREE[i];
+    var open = MF_CAT_OPEN[g.name] === true;                        // 这一组的展开状态
+    var gq = escapeHtml(g.name).replace(/'/g, '&#39;');             // 组名（安全拼进 onclick）
+    html += '<div class="mf-cat-ghead" onmousedown="event.preventDefault();mfCatToggle(\'' + gq + '\')">' + (open ? '▾ ' : '▸ ') + escapeHtml(g.name) + '</div>';  // 组头：点击折叠/展开（preventDefault 防止抢走输入框焦点导致菜单被 blur 收起）
+    if (open) {                                                     // 展开了才显示选项
+      html += '<div class="mf-cat-opt" onmousedown="mfCatPick(\'' + gq + '\')">' + escapeHtml(g.name) + '（不分子类）</div>';  // 母类本身也能选
+      for (var j = 0; j < g.subs.length; j++) {
+        var v = g.name + '/' + g.subs[j];                           // "母分类/子分类"
+        var vq = escapeHtml(v).replace(/'/g, '&#39;');              // 选项值（安全拼进 onclick）
+        html += '<div class="mf-cat-opt mf-cat-sub" onmousedown="mfCatPick(\'' + vq + '\')">' + escapeHtml(g.subs[j]) + '</div>';  // 子类只显示子类名
+      }
+    }
+  }
+  html += '<div class="mf-cat-opt" onmousedown="mfCatPick(\'自定义\')">自定义…</div>';  // 自定义入口
+  return html;
+}
+
+/* 打开 / 关闭分类菜单 */
+function mfCatMenu(show) {
+  var menu = $('#mf-cat-menu');
+  if (!menu) return;
+  if (show) {
+    menu.innerHTML = mfCatMenuHtml();                               // 每次打开按当前折叠状态重画
+    menu.style.display = 'block';
+  } else {
+    menu.style.display = 'none';
+  }
+}
+
+/* 折叠 / 展开某个母类组 */
+function mfCatToggle(name) {
+  MF_CAT_OPEN[name] = !MF_CAT_OPEN[name];                           // 翻转状态
+  var menu = $('#mf-cat-menu');
+  if (menu) menu.innerHTML = mfCatMenuHtml();                       // 重画菜单
+}
+
+/* 选中一个分类（收起菜单） */
+function mfCatPick(v) {
+  mfCatSetVal(v);                                                   // 写值 + 刷新显示
+  mfCatMenu(false);                                                 // 收起
+}
+
+/* 设置分类的值：写隐藏 input、刷新显示框、按需显示自定义输入框 */
+function mfCatSetVal(v) {
+  var hid = $('#mf-cat');                                           // 隐藏 input（提交用）
+  if (hid) hid.value = v;
+  var show = $('#mf-cat-show');                                     // 显示框
+  if (show) show.value = (v === '自定义') ? '自定义…' : v;
+  mfCatCustom();                                                    // 自定义输入框显隐
+}
+
+/* 判断一个"母分类"或"母分类/子分类"是否在分类树里（AI 带入 / 回显用） */
+function mfCatInTree(val) {
+  var parts = String(val || '').split('/');                         // 拆出母类 + 子类
+  for (var i = 0; i < CAT_TREE.length; i++) {
+    if (CAT_TREE[i].name === parts[0]) {
+      if (parts.length === 1) return true;                          // 只看母类：树里有就算
+      var sub = parts.slice(1).join('/');                           // 子类（容错：值里可能还有斜杠）
+      for (var j = 0; j < CAT_TREE[i].subs.length; j++) {
+        if (CAT_TREE[i].subs[j] === sub) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/* 分类选"自定义…"时显示自定义输入框（值可写"母分类"或"母分类/子分类"） */
+function mfCatCustom() {
+  var cat = $('#mf-cat') ? $('#mf-cat').value : '';                 // 当前分类值
+  var inp = $('#mf-cat2');                                          // 自定义输入框
+  if (inp) inp.style.display = (cat === '自定义') ? 'block' : 'none';  // 显隐
 }
 
 /* ===== 存放位置组合框 ===== */
@@ -759,24 +825,25 @@ async function saveMaterialForm(e, id) {
     }
     if (!m) { toast('物料不存在', 'err'); return; }                  // 没找到
   } else {                                                          // 新增模式
-    m = { id: uid('mat'), stock: parseInt(fd.get('stock') || 0, 10) || 0, createdAt: Date.now() };  // 初始库存只在创建时填
+    m = { id: uid('mat'), model: '', stock: parseInt(fd.get('stock') || 0, 10) || 0, createdAt: Date.now() };  // 型号字段已并入名称，新物料 model 留空
   }
-  m.name = name;                                                    // 逐字段赋值
-  m.model = String(fd.get('model') || '').trim();
-  if (!m.model) { toast('请填写型号 / 规格', 'err'); return; }       // 型号必填
-  m.cat = fd.get('cat') || '';                                      // 母分类
-  if (m.cat === '自定义') {                                         // 选了"自定义…"就取输入框的值
-    m.cat = String(fd.get('cat2') || '').trim();                    // 自定义分类名
-    if (!m.cat) { toast('请填写自定义分类名', 'err'); return; }      // 没填就拦下
-    ensureCustomCat(m.cat);                                         // 顺手存进分类树，下次下拉里直接有
+  m.name = name;                                                    // 逐字段赋值（型号信息直接写进名称，不再单列）
+  /* 分类（母/子合并成一个下拉）：值是"母分类"或"母分类/子分类"，拆开存 */
+  var catPick = String(fd.get('cat') || '');                        // 分类下拉的值
+  if (catPick === '自定义') {                                       // 选了"自定义…"就取输入框的值
+    catPick = String(fd.get('cat2') || '').trim();
+    if (!catPick) { toast('请填写自定义分类名', 'err'); return; }    // 没填就拦下
   }
-  m.sub = fd.get('sub') || '';                                      // 子分类
-  if (m.sub === '自定义') {                                         // 子类同样支持自定义
-    m.sub = String(fd.get('sub2') || '').trim();                    // 自定义子类名
-    if (!m.sub) { toast('请填写自定义子类名', 'err'); return; }      // 没填就拦下
-    ensureCustomCat(m.cat, m.sub);                                  // 存进分类树
+  if (!catPick) { toast('请选择分类', 'err'); return; }              // 分类必填
+  var slashPos = catPick.indexOf('/');                              // 拆分母分类 / 子分类
+  m.cat = (slashPos >= 0 ? catPick.slice(0, slashPos) : catPick).trim();  // 斜杠前 = 母分类
+  m.sub = slashPos >= 0 ? catPick.slice(slashPos + 1).trim() : '';  // 斜杠后 = 子分类（没有就空）
+  /* 树里没有这个组合才写入分类树（避免每次保存都盖时间戳，引发无谓的同步） */
+  var catInTree = false;
+  for (var ci = 0; ci < CAT_TREE.length; ci++) {
+    if (CAT_TREE[ci].name === m.cat && (!m.sub || CAT_TREE[ci].subs.indexOf(m.sub) >= 0)) { catInTree = true; break; }
   }
-  if (!m.cat) { toast('请选择母分类', 'err'); return; }             // 分类必填
+  if (!catInTree) ensureCustomCat(m.cat, m.sub);                    // 自定义组合存进分类树，下次下拉里直接有
   m.unit = unit;                                                    // 单位
   m.price = parseFloat(fd.get('price') || 0) || 0;                  // 单价
   /* 预警线只有管理员能改：管理员以表单值为准；普通成员编辑时保持原值、新增给默认值 5 */
@@ -795,6 +862,7 @@ async function saveMaterialForm(e, id) {
   }
   m.pkg = String(fd.get('pkg') || '').trim();                       // 封装
   if (!m.pkg) { toast('请填写封装', 'err'); return; }                // 封装必填
+  if (mfPhotos.length === 0) { toast('请至少添加一张实物照片（选图 / 拍照 / 粘贴均可）', 'err'); return; }  // 实物照片必填
   m.silk = String(fd.get('silk') || '').trim();                     // 丝印
   m.alias = String(fd.get('alias') || '').trim();                   // 别称
   m.supplier = String(fd.get('supplier') || '').trim();             // 供应商
@@ -885,7 +953,7 @@ async function pageMaterialDetail(id) {
   for (var t = 0; t < mine.length; t++) {                              // 遍历记录
     var rec = mine[t];                                                 // 当前记录
     var tp = recTypeView(rec);                                         // 类型信息（新增物料的锚点显示为"新增物料"）
-    tl += '<div id="rec-row-' + rec.id + '" class="tl-item tl-' + rec.type + '"' + (rec.revoked ? ' style="opacity:.55"' : '') + '>' +  // 类型决定圆点颜色；已撤回整条变淡
+    tl += '<div id="rec-row-' + rec.id + '" class="tl-item tl-' + rec.type + (isNewAnchor(rec) ? ' tl-new' : '') + '"' + (rec.revoked ? ' style="opacity:.55"' : '') + '>' +  // 类型决定圆点颜色（新增物料用绿点）；已撤回整条变淡
       '<div class="tl-head">' +
         '<span class="badge ' + tp.badge + '">' + tp.label + '</span>' + (rec.revoked && rec.revokedByRecord
           ? ' <span class="badge badge-jump" style="color:var(--danger);background:rgba(220,38,38,.1)" title="点击跳转冲销记录" onclick="gotoRecord(\'' + rec.revokedByRecord + '\')">已撤回 ↗</span>'
@@ -925,7 +993,7 @@ async function pageMaterialDetail(id) {
         '<div class="d-info">' +
           '<div class="d-name">' + escapeHtml(m.name) + '</div>' +
           '<div style="margin-top:6px;color:var(--text-sub)">' +
-            escapeHtml(m.model || '未填型号') + ' · ' + escapeHtml(m.cat) + (m.sub ? ' / ' + escapeHtml(m.sub) : '') +
+            (m.model ? escapeHtml(m.model) + ' · ' : '') + escapeHtml(m.cat) + (m.sub ? ' / ' + escapeHtml(m.sub) : '') +
             ' ' + (m.tags || []).map(function (t) { return '<span class="tag-chip" style="margin-left:4px">' + escapeHtml(t) + '</span>'; }).join(' ') +
           '</div>' +
         '</div>' +
@@ -1003,7 +1071,7 @@ async function openMaterialDetailModal(id) {
   for (var t = 0; t < mine.length; t++) {
     var rec = mine[t];
     var tp = recTypeView(rec);                                         // 类型（新增物料的锚点显示为"新增物料"）
-    tl += '<div id="mdm-rec-' + rec.id + '" class="tl-item tl-' + rec.type + '"' + (rec.revoked ? ' style="opacity:.55"' : '') + '>' +
+    tl += '<div id="mdm-rec-' + rec.id + '" class="tl-item tl-' + rec.type + (isNewAnchor(rec) ? ' tl-new' : '') + '"' + (rec.revoked ? ' style="opacity:.55"' : '') + '>' +
       '<div class="tl-head">' +
         '<span class="badge ' + tp.badge + '">' + tp.label + '</span>' + (rec.revoked && rec.revokedByRecord
           ? ' <span class="badge badge-jump" style="color:var(--danger);background:rgba(220,38,38,.1)" title="点击跳转冲销记录" onclick="gotoRecord(\'' + rec.revokedByRecord + '\')">已撤回 ↗</span>'
@@ -1036,7 +1104,7 @@ async function openMaterialDetailModal(id) {
   var headCard = '<div class="card" style="margin-bottom:14px"><div class="detail-head"><div class="d-info">' +
       '<div class="d-name">' + escapeHtml(m.name) + '</div>' +
       '<div style="margin-top:6px;color:var(--text-sub)">' +
-        escapeHtml(m.model || '未填型号') + ' · ' + escapeHtml(m.cat) + (m.sub ? ' / ' + escapeHtml(m.sub) : '') +
+        (m.model ? escapeHtml(m.model) + ' · ' : '') + escapeHtml(m.cat) + (m.sub ? ' / ' + escapeHtml(m.sub) : '') +
         ' ' + (m.tags || []).map(function (t) { return '<span class="tag-chip" style="margin-left:4px">' + escapeHtml(t) + '</span>'; }).join(' ') +
       '</div></div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + stockHtml + '</div>' +

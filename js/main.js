@@ -172,18 +172,23 @@ async function doLogin() {
 
 /* 首次登录的欢迎引导 */
 async function maybeShowWelcome() {
-  var shown = await DB.getSetting('welcomeShown', false);                          // 读标记
-  if (shown) {                                                                     // 已看过
+  /* 只在"这个账号第一次登录"时弹：标记记在账号行上、随多端同步，
+     换设备 / 清缓存都不会再弹（以前记在本机设置表里，每台新设备都要弹一次）。 */
+  if (Auth.user && Auth.user.welcomeSeen) {                       // 这个账号已经在任何一台设备上看过
     /* 但仍提示库存预警 */
-    var alerts = State.alertList();                                                   // 预警
-    if (alerts.length > 0) toast('注意：有 ' + alerts.length + ' 种物料库存告急，记得补货', 'warn');  // 提醒
+    var alerts0 = State.alertList();                                                   // 预警
+    if (alerts0.length > 0) toast('注意：有 ' + alerts0.length + ' 种物料库存告急，记得补货', 'warn');  // 提醒
     return;                                                                            // 结束
   }
   /* 默认密码那一行只在"用兜底账号 admin 登录"时才显示。
      每台设备第一次打开都会弹一次这个欢迎窗，如果对谁都显示，
      等于把默认密码给所有管理员看光了 —— 别的账号不该知道它。 */
   var isBootstrapAdmin = !!(Auth.user && Auth.user.username === 'admin');          // 是不是那个兜底管理员账号（首次运行自动建的，用户名固定是 admin）
-  await DB.setSetting('welcomeShown', true);                                             // 写标记
+  if (Auth.user) {                                                     // 把"已看过"标记写进账号（盖同步时间戳 → 其他设备同步后不再弹）
+    Auth.user.welcomeSeen = true;
+    stampSync(Auth.user);
+    await DB.put('users', Auth.user);
+  }
   openModal('欢迎使用物料管家 🎉', '' +
     '<div style="font-size:13.5px;line-height:1.9">' +
       '<b>三步开始使用：</b><br>' +
