@@ -99,6 +99,7 @@ async function pageUsers() {
         /* 修复按钮：早期版本的改角色/改权限没盖同步时间戳，改动只留在本机没上传，
            手机上登同一账号还是旧角色。点它可"以本机为准"重新上传全部账号。 */
         '<button class="btn btn-outline" onclick="repairUserSync()">' + ICONS.refresh + '修复账号同步</button>' +
+        '<button class="btn btn-outline" onclick="batchUserModal()">' + ICONS.upload + '批量导入</button>' +
         '<button class="btn btn-primary" onclick="addUserModal()">' + ICONS.plus + '添加成员</button>' +
       '</div>' +
     '</div>' +
@@ -224,6 +225,177 @@ async function addUserSubmit() {
   closeModal();                                                                 // 关弹窗
   toast('成员已创建', 'ok');                                                      // 提示
   pageUsers();                                                                   // 刷新
+}
+
+/* ==================== 批量导入成员（Excel / CSV 名单） ==================== */
+
+/* 批量导入的中间状态：选完文件后暂存在这里（表格二维数据 + 认出来的列号），
+   关掉弹窗就整体重置，不往数据库里写任何东西，直到最后一步点"导入" */
+var BatchUsers = { file: '', grid: [], hdrRow: -1, nameCol: 0, clsCol: -1, rows: [] };
+
+/* 第一步：弹窗选文件 */
+function batchUserModal() {
+  if (!isAdminNow()) { toast('只有管理员可以批量导入成员', 'err'); return; }          // 权限
+  BatchUsers = { file: '', grid: [], hdrRow: -1, nameCol: 0, clsCol: -1, rows: [] };     // 重置状态
+  openModal('批量导入成员', '' +
+    '<div class="form-item"><label>选择名单文件（.xlsx / .xls / .csv）</label>' +
+      '<input type="file" class="input" accept=".xlsx,.xls,.csv" onchange="batchUserPickFile(this)" /></div>' +
+    '<div class="form-hint">表格里需要有<b>姓名</b>一列；有<b>班级</b>列就一起填进成员的班级，没有就空着。部门、序号等其他列会自动忽略。<br>支持 Excel（含 WPS 导出）和 CSV；有多个工作表时只读第一个。</div>' +
+    '<div class="form-hint">初始密码统一为 <b>zknb</b>，默认角色「成员」。和现有账号重名的行会标出来，由你决定要不要也创建。</div>',
+    '<button class="btn" onclick="closeModal()">取消</button>');
+}
+
+/* 选好文件 → 解析成二维表，自动认列，进第二步预览 */
+async function batchUserPickFile(input) {
+  var f = input.files && input.files[0];                                                // 选中的文件
+  if (!f) return;                                                                       // 没选就返回
+  var grid = null;                                                                      // 解析结果（二维数组）
+  try { grid = await pmxReadGrid(f); }                                                  // 复用 BOM 导入的解析（xlsx/xls/csv 通吃）
+  catch (e) { toast('文件读不出来：' + e.message, 'err'); return; }                       // 解析失败提示
+  if (!grid || !grid.length) { toast('表格是空的', 'err'); return; }                     // 空表提示
+  BatchUsers.file = f.name;                                                             // 记住文件名（预览时显示）
+  BatchUsers.grid = grid;                                                               // 存二维表
+  /* 找表头行：从头开始找第一个"至少 2 个非空格"的行当表头（跳过顶部的标题/空白行） */
+  var hdrRow = -1;                                                                      // 默认没找到表头
+  for (var r = 0; r < Math.min(grid.length, 10); r++) {                                 // 只在前 10 行里找
+    var cnt = 0;                                                                        // 这一行的非空格数
+    for (var c = 0; c < grid[r].length; c++) { if (String(grid[r][c] || '').trim()) cnt++; }
+    if (cnt >= 2) { hdrRow = r; break; }                                                // 够 2 格就算表头
+  }
+  BatchUsers.hdrRow = hdrRow;                                                           // 记住表头行号
+  /* 按表头文字自动认列：姓名列、部门/班级列 */
+  var hdr = hdrRow >= 0 ? grid[hdrRow] : [];                                            // 表头那一行
+  var findCol = function (re) {                                                         // 按关键词找列号
+    for (var c2 = 0; c2 < hdr.length; c2++) { if (re.test(String(hdr[c2] || '').trim())) return c2; }
+    return -1;                                                                          // 没找到
+  };
+  BatchUsers.nameCol = findCol(/姓名|名字|成员|名称|学生/);                               // 姓名列
+  if (BatchUsers.nameCol < 0) BatchUsers.nameCol = 0;                                    // 认不出来默认第 1 列
+  BatchUsers.clsCol = findCol(/班级/);                                                    // 班级列（部门等其他列不管，没认出就空着）
+  batchUserStep2();                                                                     // 进第二步
+}
+
+/* 第二步：列对应（可手动改）+ 逐行预览 */
+function batchUserStep2() {
+  var hdr = BatchUsers.hdrRow >= 0 ? BatchUsers.grid[BatchUsers.hdrRow] : [];           // 表头行
+  var colOpt = function (sel) {                                                          // 生成列下拉的选项（当前选中 sel）
+    var html = '';
+    for (var c = 0; c < hdr.length; c++) {
+      var label = String(hdr[c] || '').trim() || ('第' + (c + 1) + '列');                 // 没表头就显示"第N列"
+      html += '<option value="' + c + '"' + (c === sel ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+    }
+    return html;
+  };
+  openModal('批量导入成员', '' +
+    '<div class="form-hint">文件：' + escapeHtml(BatchUsers.file || '') +
+      ' · <a href="javascript:void(0)" onclick="batchUserModal()">重新选文件</a></div>' +
+    '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
+      '<div class="form-item" style="flex:1;min-width:150px"><label>姓名列 <span class="req">*</span></label>' +
+        '<select class="select" id="bu-name-col" onchange="batchUserCalc()">' + colOpt(BatchUsers.nameCol) + '</select></div>' +
+      '<div class="form-item" style="flex:1;min-width:150px"><label>班级列（选填，没有就空着）</label>' +
+        '<select class="select" id="bu-cls-col" onchange="batchUserCalc()"><option value="-1">不导入</option>' + colOpt(BatchUsers.clsCol) + '</select></div>' +
+    '</div>' +
+    '<div class="form-hint">初始密码统一为 <b>zknb</b>，默认角色「成员」。</div>' +
+    '<label style="display:flex;gap:6px;align-items:flex-start;font-size:12.5px;color:var(--text);margin:2px 0 6px">' +
+      '<input type="checkbox" id="bu-dup" style="margin-top:3px" onchange="batchUserCalc()" />' +
+      '<span>重名的也创建（确认不是同一个人再勾）：用户名会自动加序号区分，如 张三2、张三3</span></label>' +
+    '<div id="bu-preview"></div>',                                                       // 预览区（下面 batchUserCalc 填充）
+    '<button class="btn" onclick="closeModal()">取消</button>' +
+    '<button class="btn btn-primary" id="bu-go" onclick="batchUserImport()">导入</button>');
+  batchUserCalc();                                                                       // 立刻算一遍预览
+}
+
+/* 按当前选的列重算一遍：每行是导入还是跳过（表头行以下才算数据） */
+async function batchUserCalc() {
+  var nameSel = $('#bu-name-col');                                                       // 姓名列下拉
+  if (!nameSel) return;                                                                  // 弹窗已经关了
+  BatchUsers.nameCol = parseInt(nameSel.value, 10);                                      // 记住用户选的列
+  var clsSel = $('#bu-cls-col');                                                         // 班级列下拉
+  BatchUsers.clsCol = clsSel ? parseInt(clsSel.value, 10) : -1;                          // -1 = 不导入（成员班级留空）
+  var incDup = $('#bu-dup') && $('#bu-dup').checked;                                     // "重名的也创建"开关
+  var users = await DB.all('users');                                                     // 现有全部账号
+  var taken = {};                                                                        // 已被占用的用户名（库里没删的 + 本文件排在前面已分配的）
+  for (var i = 0; i < users.length; i++) { if (!users[i].deleted) taken[users[i].username] = true; }
+  var rows = [];                                                                         // 解析出的每一行
+  var okN = 0;                                                                           // 待导入计数
+  for (var r = BatchUsers.hdrRow + 1; r < BatchUsers.grid.length; r++) {                 // 表头下一行开始
+    var name = String(BatchUsers.grid[r][BatchUsers.nameCol] || '').trim();               // 姓名（原始）
+    var cls = BatchUsers.clsCol >= 0 ? String(BatchUsers.grid[r][BatchUsers.clsCol] || '').trim() : '';  // 班级
+    if (!name && !cls) continue;                                                         // 整行全空：直接无视（表格末尾的空行）
+    if (!name) { rows.push({ raw: '', name: '', cls: cls, st: 'empty' }); continue; }    // 没名字：标记跳过
+    var finalName = name;                                                                // 最终用户名（默认就用原名）
+    var isDup = !!taken[name];                                                           // 和库里或本文件前面的行重名？
+    if (isDup) {
+      if (!incDup) { rows.push({ raw: name, name: '', cls: cls, st: 'dup' }); continue; } // 不勾"也创建"：标黄跳过，让管理员看见
+      var n = 2;                                                                         // 勾了：自动加序号（张三2、张三3……）
+      while (taken[name + n]) n++;                                                       // 序号一直加到没被占用为止
+      finalName = name + n;                                                              // 最终用户名
+    }
+    taken[finalName] = true;                                                             // 占上这个名字（后面的行再重名能接着排）
+    okN++;                                                                               // 计数
+    rows.push({ raw: name, name: finalName, cls: cls, st: 'ok' });                        // 存进结果
+  }
+  BatchUsers.rows = rows;                                                                // 给"导入"按钮用
+  /* 画预览表格 */
+  var tr = '';
+  for (var k = 0; k < rows.length; k++) {
+    var nameCell = '';                                                                   // 姓名单元格内容
+    if (rows[k].st === 'empty') nameCell = '<span style="color:var(--text-sub)">（空）</span>';
+    else if (rows[k].st === 'dup') nameCell = escapeHtml(rows[k].raw) + ' <span class="badge" style="background:rgba(217,119,6,.14);color:#b45309">重名</span>';
+    else nameCell = escapeHtml(rows[k].raw) + (rows[k].name !== rows[k].raw
+      ? ' → ' + escapeHtml(rows[k].name) + ' <span style="color:var(--text-sub)">(自动加序号)</span>'   // 重名也创建时显示最终用户名
+      : '');
+    tr += '<tr>' +
+      '<td style="color:var(--text-sub)">' + (k + 1) + '</td>' +
+      '<td>' + nameCell + '</td>' +
+      '<td>' + (rows[k].cls ? escapeHtml(rows[k].cls) : '<span style="color:var(--text-sub)">—</span>') + '</td>' +
+      '<td>' + (rows[k].st === 'ok' ? '<span class="badge badge-green">导入</span>'
+        : rows[k].st === 'dup' ? '<span class="badge" style="background:rgba(217,119,6,.14);color:#b45309">跳过</span>'
+        : '<span class="badge badge-gray">跳过</span>') + '</td>' +
+      '</tr>';
+  }
+  $('#bu-preview').innerHTML =
+    '<div style="max-height:300px;overflow:auto" class="table-wrap"><table class="tbl">' +
+    '<thead><tr><th style="width:44px">#</th><th>姓名（用户名）</th><th>班级</th><th>状态</th></tr></thead>' +
+    '<tbody>' + (tr || '<tr><td colspan="4"><div class="empty">这个文件里没有可导入的数据</div></td></tr>') + '</tbody>' +
+    '</table></div>';
+  var go = $('#bu-go');                                                                  // 导入按钮
+  if (go) { go.textContent = okN > 0 ? ('导入 ' + okN + ' 个成员') : '导入'; go.disabled = okN === 0; }  // 按钮显示数量，没有可导的禁用
+}
+
+/* 确认导入：把预览里标"导入"的行逐个建成账号（结构和单个"添加成员"完全一样） */
+async function batchUserImport() {
+  var go = $('#bu-go');                                                                  // 导入按钮（防连点）
+  if (go) { go.disabled = true; }
+  var made = 0;                                                                          // 实际建了几个
+  var suffixed = 0;                                                                      // 其中重名加序号的有几个
+  for (var i = 0; i < BatchUsers.rows.length; i++) {                                     // 逐行处理
+    var row = BatchUsers.rows[i];
+    if (row.st !== 'ok') continue;                                                       // 只处理标"导入"的行
+    if (row.name !== row.raw) suffixed++;                                                // 用户名加过序号的重名行
+    var salt = uid('salt');                                                              // 密码盐
+    var hash = await hashPassword(DEFAULT_INIT_PWD, salt);                               // 初始密码统一 zknb
+    var newUser = {                                                                      // 新账号对象（和 addUserSubmit 一致）
+      id: uid('user'), username: row.name, passwordHash: hash, salt: salt,
+      role: 'member', canManage: false, active: true, pwdChanged: false,
+      cls: row.cls, createdAt: Date.now(), lastLogin: null
+    };
+    stampPerm(newUser);                                                                  // 盖同步时间戳（否则不会同步到其他设备）
+    await DB.put('users', newUser);                                                      // 写库
+    made++;                                                                              // 计数
+  }
+  if (made > 0) {
+    await Log.add('批量导入成员', made + ' 个（' + (BatchUsers.file || '名单') + (suffixed ? '，其中 ' + suffixed + ' 个重名已加序号' : '') + '）');  // 日志
+    closeModal();                                                                        // 关弹窗
+    toast('已导入 ' + made + ' 个成员，初始密码 zknb', 'ok');                              // 提示
+    if (typeof Sync !== 'undefined' && Sync.syncNow) {                                    // 立刻推一轮同步
+      try { await Sync.syncNow(); } catch (e) { /* 同步失败不打断，下一轮自动补 */ }
+    }
+    pageUsers();                                                                         // 刷新用户列表
+  } else {
+    toast('没有可导入的成员', 'err');                                                      // 一个都没建成
+    if (go) { go.disabled = false; }
+  }
 }
 
 /* ==================== 班级就地编辑 ==================== */
