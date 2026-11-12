@@ -661,7 +661,7 @@ function aiEditHtml() {
           '· DeepSeek：https://api.deepseek.com/v1/chat/completions<br>' +
           '· Ollama 本地：http://localhost:11434/v1/chat/completions<br>' +
           '不知道地址时，到对应平台的"API / 接口文档"里找 OpenAI 兼容地址。</div>' +
-        '<div class="form-item" style="margin-top:8px"><label>API Key（接口密钥，Ollama 本地留空）</label><input class="input" type="password" value="' + escapeHtml(c.key) + '" onchange="AIEdit.list[' + i + '].key=this.value" placeholder="粘贴你申请的 Key（只存在本机）" /></div>' +
+        '<div class="form-item" style="margin-top:8px"><label>API Key（接口密钥，Ollama 本地留空）</label><input class="input" type="password" value="' + escapeHtml(c.key) + '" onchange="AIEdit.list[' + i + '].key=this.value" placeholder="粘贴你申请的 Key（开启同步后其他设备可共用）" /></div>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">' +
           (isActive
             ? '<button class="btn btn-sm btn-primary" disabled>✓ 默认配置</button>'
@@ -678,7 +678,7 @@ function aiEditHtml() {
     '<button class="btn btn-outline" onclick="aiAddCfg()">＋ 添加一个 AI 配置</button>' +
     '<button class="btn btn-primary" onclick="saveAIConfig()">保存 AI 配置</button>' +
   '</div>' +
-  '<div class="form-hint" style="margin-top:10px">推荐：智谱（glm-4-flash 免费、glm-4v-flash 支持看图）、DeepSeek（便宜）、局域网 Ollama（看图先 ollama pull qwen2.5vl / llava）。点配置标题可折叠 / 展开。</div>' +
+  '<div class="form-hint" style="margin-top:10px">推荐：智谱（glm-4-flash 免费、glm-4v-flash 支持看图）、DeepSeek（便宜）、局域网 Ollama（看图先 ollama pull qwen2.5vl / llava）。点配置标题可折叠 / 展开。<br>AI 配置会参与多端同步：任一设备保存后，其他设备下次同步自动拿到同一份配置（含 API Key），换设备不用重新填。</div>' +
   '</div>';
   return html;
 }

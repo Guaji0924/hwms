@@ -188,10 +188,11 @@ var Sync = {
         }
       }
     }
-    /* settings 表只同步下面这两项，其余（AI 配置、同步配置、欢迎标记等）留在本机：
+    /* settings 表只同步下面这几项，其余（同步配置、欢迎标记等）留在本机：
        · categoryTree —— 让自定义分类也能多端共享
-       · lastBackupAt —— 备份是全库的，任一台设备备份过，别的设备就不该再提醒 */
-    var SYNCED_SETTINGS = ['categoryTree', 'lastBackupAt'];      // 需要多端共享的设置项
+       · lastBackupAt —— 备份是全库的，任一台设备备份过，别的设备就不该再提醒
+       · aiConfig —— AI 接入配置：换台设备登录不用重新填（注意 API Key 会随同步存到服务器） */
+    var SYNCED_SETTINGS = ['categoryTree', 'lastBackupAt', 'aiConfig'];  // 需要多端共享的设置项
     for (var si = 0; si < SYNCED_SETTINGS.length; si++) {        // 逐项检查
       var sRow = await DB.get('settings', SYNCED_SETTINGS[si]);  // 读原始行（带 updatedAt）
       if (sRow && (since === 0 || (sRow.updatedAt || 0) > since)) {  // 改过才传；since=0 全量补种时也要带上
@@ -276,7 +277,7 @@ var Sync = {
     var kicked = false;                                         // 当前登录账号是不是被删掉/停用了（需要踢下线）
     for (var i = 0; i < changes.length; i++) {                  // 逐条处理
       var ch = changes[i];                                      // 一条远程变化
-      if (ch.store === 'settings') {                            // 设置表：只认分类树和上次备份时间
+      if (ch.store === 'settings') {                            // 设置表：只认分类树、AI 配置和上次备份时间
         if (ch.id === 'categoryTree') {
           var localCat = await DB.get('settings', 'categoryTree');   // 本机原始行
           var remoteT = (ch.data && ch.data.updatedAt) || 0;         // 远程的改动时间
@@ -287,6 +288,14 @@ var Sync = {
               CAT_TREE = ch.data.value;                               // 同步更新内存里的分类树
             }
             applied++;                                                // 计数
+          }
+        } else if (ch.id === 'aiConfig') {                          // AI 接入配置：谁后改谁生效（和分类树一样整行覆盖）
+          var localAi = await DB.get('settings', 'aiConfig');       // 本机原始行
+          var remoteAiT = (ch.data && ch.data.updatedAt) || 0;      // 远程的改动时间
+          var localAiT = (localAi && localAi.updatedAt) || 0;       // 本地的改动时间
+          if (remoteAiT > localAiT) {                               // 远程更新才覆盖（本机更新时自己会传上去，最终各端收敛到同一份）
+            await DB.put('settings', ch.data);                      // 写入整行
+            applied++;                                              // 计数
           }
         } else if (ch.id === 'lastBackupAt') {                       // 上次备份时间：取"更晚的那次备份"
           var localBk = await DB.get('settings', 'lastBackupAt');    // 本机原始行

@@ -76,7 +76,7 @@ async function pageDashboard() {
   var recentHtml = '';                                         // 动态 HTML
   for (var q = 0; q < recent.length; q++) {                    // 逐条渲染
     var rc = recent[q];                                        // 当前记录
-    var tp = RECORD_TYPES[rc.type] || { label: rc.type, badge: 'badge-gray' };  // 类型信息
+    var tp = recTypeView(rc);                                  // 类型信息（新增物料的锚点显示为"新增物料"）
     recentHtml += '<div class="act-item">' +
       '<span class="badge ' + tp.badge + '" style="flex:none">' + tp.label + '</span>' +
       '<span class="t-link" style="flex:1" onclick="gotoMaterial(\'' + rc.materialId + '\')">' + escapeHtml(rc.materialName) + ' <b>×' + rc.qty + '</b></span>' +
@@ -814,7 +814,9 @@ async function saveMaterialForm(e, id) {
      没有这条起点记录就算不出真实库存，物料会一直挂在"缺少期初锚点"清单里。
      老物料当年只把初始库存写进了 stock 字段、没留流水，只能靠
      Reconcile.seedAnchors() 事后补种；从现在起新建的物料自带锚点，天生可对账。
-     记录 id 固定为 'anchor-物料id'：多台设备各自建一次也只会是同一条，不会重复。 */
+     记录 id 固定为 'anchor-物料id'：多台设备各自建一次也只会是同一条，不会重复。
+     isNew 标记：界面展示为"新增物料"、成员统计计入入库次数（内部类型仍是 adjust，
+     对账引擎靠它当绝对赋值的锚点，不能改成 in）。 */
   if (!id) {
     var anchorTs = Date.now();                                       // 同一个时间戳，before/after 才对得上
     await DB.put('records', {
@@ -823,6 +825,7 @@ async function saveMaterialForm(e, id) {
       materialName: m.name,                                          // 冗余物料名（物料删除后仍可查）
       unit: m.unit || '',                                            // 单位
       type: 'adjust',                                                // 类型：库存调整（绝对赋值，正好当起点）
+      isNew: true,                                                   // 标记：这是新增物料的建档记录（展示为"新增物料"，统计算入库）
       qty: m.stock || 0,                                             // 期初数量
       price: 0,                                                      // 不涉及金额
       operator: Auth.user ? Auth.user.username : '未知',              // 建档人
@@ -881,13 +884,13 @@ async function pageMaterialDetail(id) {
   var tl = '';                                                         // 输出
   for (var t = 0; t < mine.length; t++) {                              // 遍历记录
     var rec = mine[t];                                                 // 当前记录
-    var tp = RECORD_TYPES[rec.type] || { label: rec.type, badge: 'badge-gray' };  // 类型信息
+    var tp = recTypeView(rec);                                         // 类型信息（新增物料的锚点显示为"新增物料"）
     tl += '<div id="rec-row-' + rec.id + '" class="tl-item tl-' + rec.type + '"' + (rec.revoked ? ' style="opacity:.55"' : '') + '>' +  // 类型决定圆点颜色；已撤回整条变淡
       '<div class="tl-head">' +
         '<span class="badge ' + tp.badge + '">' + tp.label + '</span>' + (rec.revoked && rec.revokedByRecord
           ? ' <span class="badge badge-jump" style="color:var(--danger);background:rgba(220,38,38,.1)" title="点击跳转冲销记录" onclick="gotoRecord(\'' + rec.revokedByRecord + '\')">已撤回 ↗</span>'
           : (rec.revoked ? ' <span class="badge badge-gray">已撤回</span>' : '')) +
-        '<b>' + (rec.type === 'adjust' ? '库存调整为 ' + rec.qty
+        '<b>' + (rec.type === 'adjust' ? (isNewAnchor(rec) ? '新增物料 · 初始库存 ' + rec.qty : '库存调整为 ' + rec.qty)
           : rec.type === 'revoke' ? (isInType(rec.revokesType) ? '−' : isOutType(rec.revokesType) ? '+' : '→') + rec.qty + ' ' + escapeHtml(rec.unit || m.unit || '')
           : (tp.sign > 0 ? '+' : '−') + rec.qty + ' ' + escapeHtml(rec.unit || m.unit || '')) + '</b>' +
         '<span class="tl-time">' + fmtDate(rec.time) + '</span>' +
@@ -999,13 +1002,13 @@ async function openMaterialDetailModal(id) {
   var tl = '';
   for (var t = 0; t < mine.length; t++) {
     var rec = mine[t];
-    var tp = RECORD_TYPES[rec.type] || { label: rec.type, badge: 'badge-gray' };
+    var tp = recTypeView(rec);                                         // 类型（新增物料的锚点显示为"新增物料"）
     tl += '<div id="mdm-rec-' + rec.id + '" class="tl-item tl-' + rec.type + '"' + (rec.revoked ? ' style="opacity:.55"' : '') + '>' +
       '<div class="tl-head">' +
         '<span class="badge ' + tp.badge + '">' + tp.label + '</span>' + (rec.revoked && rec.revokedByRecord
           ? ' <span class="badge badge-jump" style="color:var(--danger);background:rgba(220,38,38,.1)" title="点击跳转冲销记录" onclick="gotoRecord(\'' + rec.revokedByRecord + '\')">已撤回 ↗</span>'
           : (rec.revoked ? ' <span class="badge badge-gray">已撤回</span>' : '')) +
-        '<b>' + (rec.type === 'adjust' ? '库存调整为 ' + rec.qty
+        '<b>' + (rec.type === 'adjust' ? (isNewAnchor(rec) ? '新增物料 · 初始库存 ' + rec.qty : '库存调整为 ' + rec.qty)
           : rec.type === 'revoke' ? (isInType(rec.revokesType) ? '−' : isOutType(rec.revokesType) ? '+' : '→') + rec.qty + ' ' + escapeHtml(rec.unit || m.unit || '')
           : (tp.sign > 0 ? '+' : '−') + rec.qty + ' ' + escapeHtml(rec.unit || m.unit || '')) + '</b>' +
         '<span class="tl-time">' + fmtDate(rec.time) + '</span>' +
@@ -1146,12 +1149,12 @@ async function pageStockIO() {
   var rows = '';                                                         // 行集合
   for (var r = 0; r < recent.length; r++) {                              // 遍历
     var rec = recent[r];                                                 // 当前记录
-    var tp = RECORD_TYPES[rec.type] || { label: rec.type, badge: 'badge-gray' };  // 类型
+    var tp = recTypeView(rec);                                           // 类型（新增物料的锚点显示为"新增物料"）
     rows += '<tr>' +
       '<td style="white-space:nowrap">' + fmtDateShort(rec.time) + '</td>' +
       '<td><span class="t-link" onclick="gotoMaterial(\'' + rec.materialId + '\')">' + escapeHtml(rec.materialName) + '</span></td>' +
       '<td><span class="badge ' + tp.badge + '">' + tp.label + '</span></td>' +
-      '<td class="num">' + (rec.type === 'adjust' ? '→ ' + rec.qty : (tp.sign > 0 ? '+' : '−') + rec.qty) + '</td>' +
+      '<td class="num">' + (rec.type === 'adjust' && !isNewAnchor(rec) ? '→ ' + rec.qty : (tp.sign > 0 ? '+' : '−') + rec.qty) + '</td>' +
       '<td style="white-space:nowrap">' + escapeHtml(rec.operator) + '</td>' +
       '<td style="font-size:12.5px">' + escapeHtml(rec.project || '-') + '</td>' +
       '<td><button class="btn btn-sm btn-outline" onclick="repeatRecord(\'' + rec.id + '\')" title="按这条记录快速再登记一次">再来一笔</button></td>' +
@@ -1425,7 +1428,7 @@ function restoreRecogModal() {
   document.body.insertAdjacentHTML('beforeend', h);
   var masks = document.querySelectorAll('.modal-mask');
   var m2 = masks.length ? masks[masks.length - 1] : null;
-  if (m2) m2.addEventListener('click', function (e) { if (e.target === m2) closeModal(); });
+  if (m2) bindMaskClose(m2);                                       // 点空白关闭（带防拖选误关，与 openModal 同一套逻辑）
 }
 
 /* 弹窗提交 */

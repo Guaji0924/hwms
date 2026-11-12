@@ -302,7 +302,8 @@ function renderStatsCost(records) {
 }
 
 /* --- 1.4 成员出入库统计（仅管理员）---
-   按操作人统计"有效出入库"：已撤回的记录、冲销记录、库存调整都不算；可筛出库/入库，按次数/数量/金额升降序 */
+   按操作人统计"有效出入库"：已撤回的记录、冲销记录、库存调整都不算；
+   新增物料（建档时的初始库存锚点）算一笔入库；可筛出库/入库，按次数/数量/金额升降序 */
 function renderStatsUsers(records) {
   var rng = statsRange(StatsState);                                   // 时间范围起止（共用口径）
   var agg = {};                                                       // 按操作人聚合
@@ -317,10 +318,10 @@ function renderStatsUsers(records) {
     var amt = rec.qty * (rec.price || 0);                             // 本笔金额
     if (isOutType(rec.type)) {                                        // 出库
       agg[op].outC++; agg[op].outQ += rec.qty; agg[op].outA += amt;
-    } else if (isInType(rec.type)) {                                  // 入库
+    } else if (isInType(rec.type) || isNewAnchor(rec)) {              // 入库（新增物料的初始库存也算入库）
       agg[op].inC++; agg[op].inQ += rec.qty; agg[op].inA += amt;
     }
-    /* adjust 等其它类型不计 */
+    /* 纯盘点纠错的 adjust 不计 */
   }
   var arr = [];                                                       // 数组化
   for (var k in agg) arr.push({ op: k, v: agg[k] });                   // 装入
@@ -371,7 +372,7 @@ function renderStatsUsers(records) {
       '<option value="amount"' + (StatsState.usField === 'amount' ? ' selected' : '') + '>金额</option>' +
     '</select>' +
     '<button class="btn btn-primary" style="padding:0 14px;height:36px;font-size:13px;font-weight:600;white-space:nowrap" onclick="StatsState.usDir=StatsState.usDir===\'asc\'?\'desc\':\'asc\';pageStats()">' + (StatsState.usDir === 'desc' ? '降序 ↓' : '升序 ↑') + '</button>' +
-    '<span style="font-size:12px;color:var(--text-sub)">已撤回的记录不参与统计；"全部"按出库+入库合计排序</span>' +
+    '<span style="font-size:12px;color:var(--text-sub)">已撤回的记录不参与统计；新增物料（初始库存）计入入库；"全部"按出库+入库合计排序</span>' +
   '</div>';
   return ctrl + '<div class="card"><div class="card-title">成员有效出入库统计</div><div class="table-wrap"><table class="tbl">' +
     '<thead><tr>' + th + '</tr></thead><tbody>' + rows + totRow + '</tbody></table></div>';
@@ -427,7 +428,7 @@ async function exportStatsCSV() {
       if (!aggU[opU]) aggU[opU] = { outC: 0, outQ: 0, outA: 0, inC: 0, inQ: 0, inA: 0 };  // 初始化
       var amtU = rcu.qty * (rcu.price || 0);                                       // 本笔金额
       if (isOutType(rcu.type)) { aggU[opU].outC++; aggU[opU].outQ += rcu.qty; aggU[opU].outA += amtU; }
-      else if (isInType(rcu.type)) { aggU[opU].inC++; aggU[opU].inQ += rcu.qty; aggU[opU].inA += amtU; }
+      else if (isInType(rcu.type) || isNewAnchor(rcu)) { aggU[opU].inC++; aggU[opU].inQ += rcu.qty; aggU[opU].inA += amtU; }  // 新增物料的初始库存也算入库
     }
     var arrU = [];                                                               // 数组化
     for (var kU in aggU) arrU.push({ op: kU, v: aggU[kU] });                       // 装入
@@ -616,7 +617,7 @@ async function pageHistory() {
   var rows = '';                                                            // 行
   for (var p = 0; p < pageItems.length; p++) {                              // 遍历
     var rc = pageItems[p];                                                    // 当前
-    var tp = RECORD_TYPES[rc.type] || { label: rc.type, badge: 'badge-gray' };  // 类型
+    var tp = recTypeView(rc);                                                 // 类型（新增物料的锚点显示为"新增物料"）
     /* 已撤回的记录整行变淡，类型旁加"已撤回"标记（记录保留可追溯，但不计入任何统计） */
     rows += '<tr id="rec-row-' + rc.id + '"' + (rc.revoked ? ' style="opacity:.55"' : '') + '>' +
       '<td style="white-space:nowrap">' + fmtDate(rc.time) + '</td>' +
@@ -987,7 +988,7 @@ async function exportAllRecordsCSV() {
   for (var i = 0; i < records.length; i++) {                                      // 遍历
     var r = records[i];                                                            // 当前
     if (r.deleted) continue;                                                       // 已删除不导出
-    rows.push([fmtDate(r.time), r.materialName, (RECORD_TYPES[r.type] || { label: r.type }).label, r.qty,  // 行数据
+    rows.push([fmtDate(r.time), r.materialName, recTypeView(r).label, r.qty,  // 行数据（新增物料的锚点导出为"新增物料"）
       r.unit || '', r.price || 0, (r.qty * (r.price || 0)).toFixed(2),
       r.operator, r.project || '', r.remark || '', r.before !== undefined ? r.before : '', r.after !== undefined ? r.after : '']);
   }

@@ -86,6 +86,27 @@ function isInType(t) {
   return t === 'in' || t === 'return';                                          // 归还也算库存增加
 }
 
+/* 判断一条记录是不是"新增物料"的期初锚点（建档时随初始库存一起写入的那条 adjust）。
+   内部类型仍保持 adjust 不变：对账引擎靠它当"绝对赋值"的起点（期初 = 后面流水的累加基准），
+   改成 in 会把"从 0 加到初始值"和"绝对赋值"混在一起，对账就乱了。
+   只在展示和统计上把它当"新增物料"（等同一笔入库）看待。
+   识别规则：新数据带 isNew 标记；旧数据没标记，用"id 以 anchor- 开头且操作人不是系统"判断
+   —— 对账功能自动补种的锚点（Reconcile.seedAnchors）操作人是"系统"，不算新增物料。 */
+function isNewAnchor(rec) {
+  if (rec.isNew === true) return true;                                         // 新数据：建档时带的标记
+  return String(rec.id || '').indexOf('anchor-') === 0 && rec.operator !== '系统';  // 旧数据：建档锚点（系统补种的除外）
+}
+
+/* 记录类型的展示信息（徽章文字 / 颜色 / 库存方向）。
+   新增物料的锚点在界面上显示为"新增物料"（绿色，视同入库），不再叫"库存调整"；
+   其余按 RECORD_TYPES 原样返回；未知类型兜底灰色。 */
+function recTypeView(rec) {
+  if (rec.type === 'adjust' && isNewAnchor(rec)) {                // 新增物料的期初锚点
+    return { label: '新增物料', badge: 'badge-green', sign: 1 };   // 绿色 + 号，跟入库一个观感
+  }
+  return RECORD_TYPES[rec.type] || { label: rec.type, badge: 'badge-gray', sign: 0 };  // 其余类型查表
+}
+
 /* ==================== 1.6 图片压缩 ==================== */
 /**
  * 把用户上传的照片压缩成适合入库的小图（JPEG dataURL，约 30~80KB）
@@ -428,7 +449,10 @@ var DB = {
 
   /* 保存设置项 */
   setSetting: function (key, value) {
-    return DB.put('settings', { id: key, value: value });      // 写入键值对
+    /* 带上 updatedAt：同步引擎靠它判断"这条要不要上传 / 谁的更新"。
+       以前没盖这个戳，设置项只在 lastSync=0 的全量补种时才会被带上，
+       之后改动的分类树 / AI 配置就一直传不出去了。 */
+    return DB.put('settings', { id: key, value: value, updatedAt: Date.now() });  // 写入键值对（含改动时间）
   }
 };
 
@@ -779,6 +803,20 @@ function toast(msg, type) {
   }, 3000);
 }
 
+/* 给遮罩绑"点空白处关闭"：必须按下和松开都在遮罩上才关。
+   为什么不能只听 click：在输入框里拖动选择文字时，如果松手的位置落在了遮罩空白处，
+   浏览器会在"按下点和松开点的共同祖先"（正好是遮罩）上补发一个 click，
+   只听 click 会把这种拖选当成"点空白"，弹窗被误关、填了一半的表单直接丢掉。 */
+function bindMaskClose(mask) {
+  var downOnMask = false;                                          // 按下那一刻是否在遮罩上
+  mask.addEventListener('mousedown', function (e) {                // 记录按下起点
+    downOnMask = (e.target === mask);                              // 只有直接按在遮罩上才算
+  });
+  mask.addEventListener('click', function (e) {                    // 抬起（click）时再判断
+    if (downOnMask && e.target === mask) closeModal();             // 按下和松开都在遮罩上 → 真的是点空白，关闭
+  });
+}
+
 /* 打开弹窗：openModal(标题, 内容HTML, 底部HTML, 是否宽弹窗) */
 function openModal(title, bodyHtml, footHtml, wide, keepPrev) {
   if (!keepPrev) closeModal();                                    // 先关掉旧弹窗（keepPrev：保留已隐藏的来源弹窗做叠层）
@@ -795,9 +833,7 @@ function openModal(title, bodyHtml, footHtml, wide, keepPrev) {
       '<div class="modal-body">' + bodyHtml + '</div>' +          // 内容区
       (footHtml ? '<div class="modal-foot">' + footHtml + '</div>' : '') +  // 底部按钮（可选）
     '</div>';
-  mask.addEventListener('click', function (e) {                    // 点遮罩空白处关闭
-    if (e.target === mask) closeModal();                          // 只有直接点到遮罩才关
-  });
+  bindMaskClose(mask);                                             // 点遮罩空白处关闭（带防拖选误关）
   document.body.appendChild(mask);                                // 显示弹窗
   return mask;                                                    // 返回 DOM 方便后续操作
 }
