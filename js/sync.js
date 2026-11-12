@@ -195,7 +195,16 @@ var Sync = {
     var SYNCED_SETTINGS = ['categoryTree', 'lastBackupAt', 'aiConfig'];  // 需要多端共享的设置项
     for (var si = 0; si < SYNCED_SETTINGS.length; si++) {        // 逐项检查
       var sRow = await DB.get('settings', SYNCED_SETTINGS[si]);  // 读原始行（带 updatedAt）
-      if (sRow && (since === 0 || (sRow.updatedAt || 0) > since)) {  // 改过才传；since=0 全量补种时也要带上
+      if (!sRow) continue;                                        // 本机没有这一项就跳过
+      /* 自愈：旧版本写下的设置行没有 updatedAt（旧 setSetting 不盖时间戳），
+         算出来永远是 0，不满足"晚于上次同步"，会一直卡在本机传不出去——
+         表现为"系统设置里改的分类同步不到别的设备"。这里就地补上当前时间
+         （只补一次，补完写回本机），历史改动也能上传，和上面四张表的自愈同理。 */
+      if (!sRow.updatedAt) {                                      // 没有时间戳 = 旧版本写的
+        sRow.updatedAt = Date.now();                              // 补上当前时间
+        await DB.put('settings', sRow);                           // 写回本机（下次就不会再补了）
+      }
+      if (since === 0 || sRow.updatedAt > since) {                // 改过才传；since=0 全量补种时也要带上
         changes.push({ store: 'settings', id: SYNCED_SETTINGS[si], data: sRow });  // 打包整行
       }
     }
