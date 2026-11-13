@@ -65,7 +65,7 @@ var Reconcile = {
     return { conflicts: conflicts, noAnchor: noAnchor };
   },
 
-  /* ---------- 跑一轮对账（带 60 秒节流，避免每 8 秒同步都全量算一遍） ---------- */
+  /* ---------- 跑一轮对账（带 60 秒节流，避免每 30 秒同步都全量算一遍） ---------- */
   run: async function (force) {
     if (this.state.running) return this.state.conflicts;         // 正在跑，直接返回上次结果
     if (!force && Date.now() - this.state.lastRun < 60000) return this.state.conflicts;  // 节流

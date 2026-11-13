@@ -11,7 +11,7 @@
       这是最简单可靠的做法，协会场景够用。
    4. 删除不是真删，而是打上 deleted 标记（墓碑），
       这样"删除"这个动作才能被同步到其他设备。
-   5. 有网时每 8 秒自动同步一次；刚断网恢复、刚回到页面时
+   5. 有网时每 30 秒自动同步一次；刚断网恢复、刚回到页面时
       也会立刻同步 —— 平时完全不用管它。
    服务器端见 server/server.js（一个零依赖的 Node 小服务器）。
    ============================================================ */
@@ -47,6 +47,19 @@ async function fetchWithTimeout(url, options, ms) {
   } finally {
     clearTimeout(timer);                                               // 无论成败都要清掉定时器
   }
+}
+
+/* 从失败应答的返回体里提取服务器带的人话错误信息（提不到就只报状态码）。
+   云端版接口出错时会返回 { ok:false, message:"原因……" }，
+   提取出来直接展示，用户就知道该检查绑定、建表还是等配额恢复，
+   而不是只看到一个干巴巴的 500。 */
+async function readErrorMessage(res, prefix) {
+  var detail = '';                                             // 额外的详细说明（可能为空）
+  try {
+    var data = await res.json();                               // 尝试解析应答体
+    if (data && data.message) detail = '：' + data.message;    // 服务器带了好消息就拼上
+  } catch (e) { /* 应答体不是 JSON（如网关错误页）就只显示状态码 */ }
+  return prefix + res.status + detail;                         // "前缀 + 状态码[：原因]"
 }
 
 /* 从服务器拉取最新同步配置（admin 改后成员自动同步） */
@@ -147,7 +160,11 @@ var Sync = {
     if (this.state.enabled && navigator.onLine) this.syncNow().catch(function () {});  // 立刻试同步
   },
 
-  /* ---------- 定时同步：每 8 秒检查一次 ---------- */
+  /* ---------- 定时同步：每 30 秒检查一次 ----------
+     为什么是 30 秒：云端版（Cloudflare D1 免费套餐）的读取额度按"查询扫描过的行数"
+     计费，轮询越频繁额度烧得越快（曾因 8 秒一轮 + 多设备把 500 万行/天的额度
+     吃光，导致所有同步接口返回 500）。30 秒既保证同步足够及时，又把轮询量
+     降了下来；断网恢复、切回页面、保存设置时仍会立即同步，不受影响。 */
   startTimer: function () {
     if (this.state.timer) clearInterval(this.state.timer);      // 先清掉旧定时器
     var self = this;                                            // 保存 this
@@ -155,7 +172,7 @@ var Sync = {
       if (self.state.enabled && navigator.onLine && !self.state.syncing) {  // 条件满足才跑
         self.syncNow().catch(function () {});                   // 静默失败（不打扰）
       }
-    }, 8000);                                                   // 8 秒一轮
+    }, 30000);                                                  // 30 秒一轮
   },
 
   /* ---------- 同步请求统一使用的请求头 ---------- */
@@ -218,7 +235,7 @@ var Sync = {
      force=true 时允许把"服务器上已标记删除的账号"恢复回来，只给"恢复备份"用；
      平时一律不带，保证账号一旦被删就不会被任何设备复活。 */
   syncNow: async function (force) {
-    /* 已经有一轮同步在跑（比如 8 秒定时任务刚触发，或上一轮请求卡住）：
+    /* 已经有一轮同步在跑（比如 30 秒定时任务刚触发，或上一轮请求卡住）：
        不能返回 0 条冒充成功，否则"立即同步"按钮会谎报"同步完成：上传 0 条"。
        这里返回 busy 标记，让按钮提示用户稍等，真实错误才不会被掩盖 */
     if (this.state.syncing) return { pushed: 0, pulled: 0, busy: true };
@@ -238,13 +255,13 @@ var Sync = {
           body: JSON.stringify({ device: this.state.device, force: !!force, changes: local })  // 数据（force 只在恢复备份时为 true）
         });
         if (pushRes.status === 401) throw new Error('服务器拒绝访问（401）：请确认"同步服务器地址"是否正确');  // 401 = 服务器不接受这台设备
-        if (!pushRes.ok) throw new Error('上传失败，服务器返回 ' + pushRes.status);  // 其他服务器错误
+        if (!pushRes.ok) throw new Error(await readErrorMessage(pushRes, '上传失败，服务器返回 '));  // 其他服务器错误（尽量带上人话原因）
         pushed = local.length;                                  // 记录条数
       }
       /* 第二步：从服务器拉取别人的新变化 */
       var pullRes = await fetchWithTimeout(this.state.url + '/api/pull?since=' + this.state.lastSync + '&device=' + encodeURIComponent(this.state.device), { headers: this.authHeaders() });  // 拉取接口（带 30 秒超时）
       if (pullRes.status === 401) throw new Error('服务器拒绝访问（401）：请确认"同步服务器地址"是否正确');  // 401 = 服务器不接受这台设备
-      if (!pullRes.ok) throw new Error('下载失败，服务器返回 ' + pullRes.status);  // 其他服务器错误
+      if (!pullRes.ok) throw new Error(await readErrorMessage(pullRes, '下载失败，服务器返回 '));  // 其他服务器错误（尽量带上人话原因）
       var data = await pullRes.json();                          // { serverTime, changes, serverEmpty }
       var pulled = await this.applyServerChanges(data.changes || []);  // 应用到本机
       /* 服务器报"空库"（刚部署 / 免费云主机磁盘被重置）而本机有数据时，
@@ -257,7 +274,7 @@ var Sync = {
             headers: this.authHeaders(),                        // JSON 请求体
             body: JSON.stringify({ device: this.state.device, changes: seed })  // 全部数据
           });
-          if (!seedRes.ok) throw new Error('补传数据失败，服务器返回 ' + seedRes.status);  // 补种失败要报错
+          if (!seedRes.ok) throw new Error(await readErrorMessage(seedRes, '补传数据失败，服务器返回 '));  // 补种失败要报错（尽量带上人话原因）
           pushed = seed.length;                                 // 上传条数按补种算
         }
       }
@@ -367,7 +384,7 @@ var Sync = {
        为什么不能只靠上面遍历里的判断：那里只有"本次变化里正好带着这条账号"时才触发；
        如果墓碑是在更早的某一轮就已经被本机收下（比如当时还没登录、或者本机断网期间
        另一台设备删的），内存里的登录状态就会一直留着 —— 被删成员照样能继续登记出入库。
-       这里每轮同步都强制查一遍，最多 8 秒就会把已失效的账号踢下线。 */
+       这里每轮同步都强制查一遍，最多 30 秒就会把已失效的账号踢下线。 */
     if (!kicked && typeof Auth !== 'undefined' && Auth.user) {
       var selfRow = await DB.get('users', Auth.user.id);        // 重新读一遍自己的账号
       if (!selfRow || selfRow.deleted || !selfRow.active) kicked = true;  // 已删除 / 已停用 → 踢下线
@@ -388,7 +405,7 @@ var Sync = {
        每次拉完就查一遍最合适。它会拿 records 流水反推库存，和 stock 字段比，
        对不上的就亮顶栏角标；其中"算出来是负数"（离线超卖）的，如果肇事出库
        记录正好是当前登录的人开的，就弹窗请他填实际出库数。
-       Reconcile.run() 内部有 60 秒节流，8 秒一轮的同步不会把它跑成负担；
+       Reconcile.run() 内部有 60 秒节流，30 秒一轮的同步不会把它跑成负担；
        对账本身出错也不该连累同步，所以整段包 try/catch。 */
     if (typeof Reconcile !== 'undefined') {
       try {
@@ -435,7 +452,7 @@ var Sync = {
          "复活"而拒收，恢复备份就等于白恢复。 */
       body: JSON.stringify({ device: this.state.device, full: true, force: true, changes: changes })
     });
-    if (!res.ok) throw new Error('服务器返回 ' + res.status);     // 服务器错误
+    if (!res.ok) throw new Error(await readErrorMessage(res, '服务器返回 '));  // 服务器错误（尽量带上人话原因）
     return await res.json();                                     // { ok, accepted, tombstoned }
   }
 };

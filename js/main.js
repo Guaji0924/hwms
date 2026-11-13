@@ -490,7 +490,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     } else {                                                                                                                            // 未登录
       renderLogin();                                                                                                                     // 登录页
     }
-    /* 6. 启动多端同步引擎：恢复同步配置、注册"断网恢复/切回页面"即时同步、启动 8 秒定时同步 */
+    /* 6. 启动多端同步引擎：恢复同步配置、注册"断网恢复/切回页面"即时同步、启动 30 秒定时同步 */
     if (typeof Sync !== 'undefined' && Sync.init) {                                                                                        // 同步引擎已加载
       try { await Sync.init(); }                                                                                                           // 启动（内部会按配置决定是否真正联网同步）
       catch (e) { console.warn('同步引擎启动失败，不影响本机使用', e); }                                                                      // 失败不阻断应用启动
