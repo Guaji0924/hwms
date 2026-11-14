@@ -231,6 +231,85 @@ var Sync = {
     return changes;                                             // 交给调用方上传
   },
 
+  /* ---------- 把一批变化分批上传给服务器（每批 ≤ 300KB / ≤ 50 条） ----------
+     为什么是 300KB：请求有 30 秒超时。实测劣化网络下只有约 15KB/s，
+     30 秒最多能传 450KB 左右，批再大就必然超时失败（会永远传不完）。
+     300KB 留了安全余量；网络好时多跑几趟也不影响正确性。
+     为什么分批：设备断网/故障几天后攒下的变化可能有好几 MB，一个请求打包上传，
+     在劣化网络（比如 pages.dev 被间歇干扰）下传到一半就被掐断（Failed to fetch），
+     重试又得从头来，永远传不完。拆成小批，存活率高得多。
+     某一批失败：整轮同步报错、水位线不前进，下一轮从还没传出去的变化继续；
+     已传出去的批下次不会重传（时间戳没变，服务器会按"已是最新"跳过）。 */
+  pushChanges: async function (changes, force) {
+    var pushed = 0;                                             // 实际推送条数
+    /* 第一步：先把变化按"每批 ≤ 300KB 且 ≤ 50 条"切好 */
+    var batches = [];                                           // 切好的批
+    var cur = [];                                               // 当前正在攒的批
+    var curSize = 0;                                            // 当前批的序列化大小（字符数，近似传输体积）
+    for (var ci = 0; ci < changes.length; ci++) {               // 逐条分拣
+      var itemLen = JSON.stringify(changes[ci]).length;         // 这一条的序列化大小
+      if (cur.length > 0 && (curSize + itemLen > 300 * 1024 || cur.length >= 50)) {  // 满了就封箱（300KB / 50 条）
+        batches.push(cur);                                      // 封箱
+        cur = [];                                               // 开新箱
+        curSize = 0;
+      }
+      cur.push(changes[ci]);                                    // 装箱
+      curSize += itemLen;                                       // 累计大小
+    }
+    if (cur.length > 0) batches.push(cur);                      // 最后一箱
+    /* 第二步：逐批上传（顺序发、不并发，避免挤爆劣化链路） */
+    for (var bi = 0; bi < batches.length; bi++) {
+      var pushRes = await fetchWithTimeout(this.state.url + '/api/push', {  // 推送接口（带 30 秒超时）
+        method: 'POST',                                         // POST 方式
+        headers: this.authHeaders(),                            // JSON 请求体
+        body: JSON.stringify({ device: this.state.device, force: !!force, changes: batches[bi] })  // 本批数据（force 只在恢复备份时为 true）
+      });
+      if (pushRes.status === 401) throw new Error('服务器拒绝访问（401）：请确认"同步服务器地址"是否正确');  // 401 = 服务器不接受这台设备
+      if (!pushRes.ok) throw new Error(await readErrorMessage(pushRes, '上传失败，服务器返回 '));  // 其他服务器错误（尽量带上人话原因）
+      pushed += batches[bi].length;                             // 累计条数
+    }
+    return pushed;                                              // 告诉调用方传了几条
+  },
+
+  /* ---------- 分页拉取：把服务器上的新变化一页一页搬回来 ----------
+     为什么分页：和推送同样的道理 —— 攒了几天的变化一个请求打包下载，
+     劣化网络下传一半就被掐断，重试从头来，永远拉不完。拆页后小包存活率高。
+     页的大小由服务器控制：最多 50 条、且累计约 300KB 就截断（和推送端一批
+     300KB 对齐），所以带照片的大行不会把一页撑爆。
+     翻页靠服务器返回的"游标"（上一页最后一条的位置），从游标之后接着取。
+     水位线（serverTime）以第一页为准：后几页的查询从游标接着扫，不受时刻限制，
+     用第一页的时刻回退 2 秒最稳妥（多拉的会按"本机已是最新"自动跳过）。
+     兼容性：本地版服务器（server.js）不认识分页参数，会一次返回全部、不带
+     hasMore 标记 —— 客户端看到没有 hasMore 就当作"只有一页"，行为和以前一致。 */
+  pullAll: async function () {
+    var allChanges = [];                                        // 各页攒起来的变化
+    var firstServerTime = 0;                                    // 第一页的截止时刻（水位线以它为准）
+    var serverEmpty = false;                                    // 是否空库（以第一页为准）
+    var cursorRev = 0;                                          // 翻页游标：上一页最后一条的 rev
+    var cursorStore = '';                                       // 翻页游标：上一页最后一条的表名
+    var cursorId = '';                                          // 翻页游标：上一页最后一条的主键
+    for (var page = 1; page <= 200; page++) {                   // 防呆上限 200 页（正常几页就完了）
+      /* 第一页不带游标；第二页起带着上一页的游标接着取 */
+      var u = this.state.url + '/api/pull?since=' + this.state.lastSync +
+        '&device=' + encodeURIComponent(this.state.device) + '&limit=50' +
+        (page > 1 ? '&cursorRev=' + cursorRev + '&cursorStore=' + encodeURIComponent(cursorStore) + '&cursorId=' + encodeURIComponent(cursorId) : '');
+      var res = await fetchWithTimeout(u, { headers: this.authHeaders() });  // 拉一页（带 30 秒超时）
+      if (res.status === 401) throw new Error('服务器拒绝访问（401）：请确认"同步服务器地址"是否正确');  // 401 = 服务器不接受这台设备
+      if (!res.ok) throw new Error(await readErrorMessage(res, '下载失败，服务器返回 '));  // 其他服务器错误（尽量带上人话原因）
+      var data = await res.json();                              // 本页数据 { serverTime, changes, serverEmpty, hasMore, cursorRev, cursorStore, cursorId }
+      if (page === 1) {                                         // 只记第一页的
+        firstServerTime = data.serverTime || Date.now();        // 截止时刻（用第一页的，理由见上面的说明）
+        serverEmpty = !!data.serverEmpty;                       // 空库标记
+      }
+      allChanges = allChanges.concat(data.changes || []);       // 攒起来，最后统一应用
+      if (!data.hasMore) break;                                 // 没有下一页了 → 拉完了
+      cursorRev = data.cursorRev || 0;                          // 记下游标，接着翻
+      cursorStore = data.cursorStore || '';
+      cursorId = data.cursorId || '';
+    }
+    return { serverTime: firstServerTime, changes: allChanges, serverEmpty: serverEmpty };  // 汇总交回
+  },
+
   /* ---------- 执行一轮完整同步：先推后拉 ----------
      force=true 时允许把"服务器上已标记删除的账号"恢复回来，只给"恢复备份"用；
      平时一律不带，保证账号一旦被删就不会被任何设备复活。 */
@@ -245,37 +324,21 @@ var Sync = {
     this.state.syncing = true;                                  // 上锁
     updateNetState();                                           // 顶栏显示"同步中"
     try {
-      /* 第一步：把本机的新变化推给服务器 */
+      /* 第一步：把本机的新变化推给服务器（分批上传，见 pushChanges 的说明） */
       var local = await this.collectLocalChanges(this.state.lastSync);  // 收集
       var pushed = 0;                                           // 实际推送条数
       if (local.length > 0) {                                   // 有东西才推
-        var pushRes = await fetchWithTimeout(this.state.url + '/api/push', {  // 推送接口（带 30 秒超时）
-          method: 'POST',                                       // POST 方式
-          headers: this.authHeaders(),                          // JSON 请求体
-          body: JSON.stringify({ device: this.state.device, force: !!force, changes: local })  // 数据（force 只在恢复备份时为 true）
-        });
-        if (pushRes.status === 401) throw new Error('服务器拒绝访问（401）：请确认"同步服务器地址"是否正确');  // 401 = 服务器不接受这台设备
-        if (!pushRes.ok) throw new Error(await readErrorMessage(pushRes, '上传失败，服务器返回 '));  // 其他服务器错误（尽量带上人话原因）
-        pushed = local.length;                                  // 记录条数
+        pushed = await this.pushChanges(local, force);          // 分批上传
       }
-      /* 第二步：从服务器拉取别人的新变化 */
-      var pullRes = await fetchWithTimeout(this.state.url + '/api/pull?since=' + this.state.lastSync + '&device=' + encodeURIComponent(this.state.device), { headers: this.authHeaders() });  // 拉取接口（带 30 秒超时）
-      if (pullRes.status === 401) throw new Error('服务器拒绝访问（401）：请确认"同步服务器地址"是否正确');  // 401 = 服务器不接受这台设备
-      if (!pullRes.ok) throw new Error(await readErrorMessage(pullRes, '下载失败，服务器返回 '));  // 其他服务器错误（尽量带上人话原因）
-      var data = await pullRes.json();                          // { serverTime, changes, serverEmpty }
+      /* 第二步：从服务器拉取别人的新变化（分页拉取，见 pullAll 的说明） */
+      var data = await this.pullAll();                          // { serverTime, changes, serverEmpty }
       var pulled = await this.applyServerChanges(data.changes || []);  // 应用到本机
       /* 服务器报"空库"（刚部署 / 免费云主机磁盘被重置）而本机有数据时，
          自动把本机全部数据重新上传一遍帮服务器恢复 —— 数据不会因为云主机重启而丢 */
       if (data.serverEmpty) {
         var seed = await this.collectLocalChanges(0);           // 全量收集（不过滤时间）
         if (seed.length > 0) {                                  // 本机有数据才补种
-          var seedRes = await fetchWithTimeout(this.state.url + '/api/push', {  // 全量推送（带 30 秒超时）
-            method: 'POST',                                     // POST 方式
-            headers: this.authHeaders(),                        // JSON 请求体
-            body: JSON.stringify({ device: this.state.device, changes: seed })  // 全部数据
-          });
-          if (!seedRes.ok) throw new Error(await readErrorMessage(seedRes, '补传数据失败，服务器返回 '));  // 补种失败要报错（尽量带上人话原因）
-          pushed = seed.length;                                 // 上传条数按补种算
+          pushed = await this.pushChanges(seed, false);         // 补种也走分批上传（数据量更大，更需要拆）
         }
       }
       /* 第三步：记录本次同步到的位置（用服务器时间，避免各设备时钟不一致）。
@@ -432,6 +495,9 @@ var Sync = {
   },
 
   /* ---------- 以本机数据为"完整快照"，让服务器清理掉本机没有的行 ----------
+     注意：这里必须一次性上传、不能像 pushChanges 那样分批 ——
+     服务器要拿"本次请求里的完整清单"去比对全库、给清单外的行打墓碑，
+     分批的话每一批都会把"不在这一批里"的行误打成墓碑，把好数据清掉。
      用途：数据在多端之间已经不一致时（早期版本的清空/初始化是真删，别的设备
      根本不知道要删），那些历史残留会永远留在服务器和其他设备上 —— 没有任何
      设备还记得它们，所以谁也传不出"删除"这个动作。只有让服务器以本机的完整

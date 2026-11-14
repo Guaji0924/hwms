@@ -19,3 +19,9 @@ CREATE TABLE IF NOT EXISTS sync_rows (
 
 -- 给 rev 建索引，加速"增量下拉"（WHERE rev > ?）的查询
 CREATE INDEX IF NOT EXISTS idx_sync_rows_rev ON sync_rows (rev);
+
+-- 分页拉取用的复合索引：翻页条件 (rev, store, id) > (?, ?, ?) 靠它走
+-- "覆盖索引范围查询"（SEARCH），避免退化成全表扫描烧读取额度。
+-- 注意：不能建 (rev, rowid) 索引 —— SQLite 不允许对隐式 rowid 建索引。
+-- 已部署的库补执行下面这句即可，重复执行无害。
+CREATE INDEX IF NOT EXISTS idx_sync_rows_page ON sync_rows (rev, store, id);
